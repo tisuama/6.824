@@ -1,10 +1,12 @@
 package mr
 
 import "fmt"
+import "hash/fnv"
 import "log"
 import "net/rpc"
-import "hash/fnv"
-
+import "os"
+import "io/ioutil"
+import "sort"
 
 //
 // Map functions return a slice of KeyValue.
@@ -32,10 +34,62 @@ func Worker(mapf func(string, string) []KeyValue,
 	reducef func(string, []string) string) {
 
 	// Your worker implementation here.
-
+	request := &Request{}
+	reply := &Reply{}
+	if !RequestForWork(request, reply) {
+		log.Fatal("ReuqestForWork Fialed")
+		return
+	}
+	switch reply.Worker_Type {
+	case "map":
+		do_map_work(reply)
+	case "reduce":
+		do_reduce_work(mapf, reply)
+	case "wait":
+		do_wait_work(reply)
+	case "all_work_done":
+		do_finish_work(reply)
+	default:
+		log.Fatal("Reply Type Error")
+	}
 	// uncomment to send the Example RPC to the master.
 	// CallExample()
 
+}
+
+func do_map_work(mapf func(string, string) []KeyValue,
+				 reply *Reply) {
+	filename := reply.Input_File_Name
+	workerid := reply.Worker_Id
+	file, err := os.Open(filename)
+	if err != nil {
+		log.Fatalf("cannt open %v", filename)
+	}
+	content, err := ioutil.ReadAll(file)
+	if err != nil {
+		log.Fatalf("canot read %v", filename)
+	}
+	file.Close()
+	kva := mapf(filename ,string(content))
+	sort.Sort(ByKey(kva))
+	
+}
+
+func do_reduce_work(reply *Reply) {
+
+}
+
+func do_wait_work(reply *Reply) {
+
+}
+
+func do_finish_work(reply *Reply) {
+
+}
+
+func RequestForWork(request *Request, reply *Reply) bool {
+	// request for work
+	return call("Master.GetWork", &request, &reply)
 }
 
 //

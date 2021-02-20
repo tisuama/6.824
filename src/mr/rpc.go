@@ -23,7 +23,19 @@ type ExampleReply struct {
 }
 
 // Add your RPC definitions here.
+type Request struct {
+	Output_File_Name string
+}
 
+type Reply struct {
+	// case 1: map
+	// case 2: reduce
+	// case 3: wait
+	// case 4: all_work_done
+	Worker_Type string
+	Worker_Id int
+	Input_File_Name string	
+}
 
 // Cook up a unique-ish UNIX-domain socket name
 // in /var/tmp, for the master.

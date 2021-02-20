@@ -25,6 +25,22 @@ func (m *Master) Example(args *ExampleArgs, reply *ExampleReply) error {
 }
 
 
+// case1: GetWork 请求Map或者Reduce任务
+func (m* Master) GetWork(request *Request, reply *Reply) error {
+	// case1.1 Map
+	// case1.2 Reduce
+	// case1.3 WaitAllMapDone
+	// case1.4 AllWorkDone
+}
+
+// case2: CompleteMap
+func (m* Master) CompleteMap(request *Request, reply *Reply) error {
+
+}
+// case3: CompleteReduce
+func (m* Master) CompleteReduce(request *Request, reply *Reply) error {
+
+}
 //
 // start a thread that listens for RPCs from worker.go
 //
