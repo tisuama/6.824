@@ -1,12 +1,17 @@
 package mr
 
-import "fmt"
-import "hash/fnv"
-import "log"
-import "net/rpc"
-import "os"
-import "io/ioutil"
-import "sort"
+import (
+	"encoding/json"
+	"fmt"
+	"hash/fnv"
+	"io/ioutil"
+	"log"
+	"net/rpc"
+	"os"
+	"strconv"
+	"sort"
+	"time"
+)
 
 //
 // Map functions return a slice of KeyValue.
@@ -15,6 +20,14 @@ type KeyValue struct {
 	Key   string
 	Value string
 }
+
+// for sorting by key.
+type ByKey []KeyValue
+
+// for sorting by key.
+func (a ByKey) Len() int           { return len(a) }
+func (a ByKey) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
+func (a ByKey) Less(i, j int) bool { return a[i].Key < a[j].Key }
 
 //
 // use ihash(key) % NReduce to choose the reduce
@@ -34,23 +47,27 @@ func Worker(mapf func(string, string) []KeyValue,
 	reducef func(string, []string) string) {
 
 	// Your worker implementation here.
-	request := &Request{}
-	reply := &Reply{}
-	if !RequestForWork(request, reply) {
-		log.Fatal("ReuqestForWork Fialed")
-		return
-	}
-	switch reply.Worker_Type {
-	case "map":
-		do_map_work(reply)
-	case "reduce":
-		do_reduce_work(mapf, reply)
-	case "wait":
-		do_wait_work(reply)
-	case "all_work_done":
-		do_finish_work(reply)
-	default:
-		log.Fatal("Reply Type Error")
+	for {
+		request := &Request{}
+		reply := &Reply{}
+		// 如果没有请求到数据，直接退出了
+		if !RequestForWork(request, reply, "Master.assign_work") {
+			log.Fatal("ReuqestForWork fialed")
+			break
+		}
+		switch reply.WorkType {
+		case "map":
+			do_map_work(mapf, reply)
+		case "reduce":
+			do_reduce_work(reducef, reply)
+		case "wait":
+			do_wait_work(reply)
+		case "all_work_done":
+			// 所有工作都做完了，直接退出
+			break
+		default:
+			log.Fatal("Reply type error")
+		}
 	}
 	// uncomment to send the Example RPC to the master.
 	// CallExample()
@@ -59,8 +76,11 @@ func Worker(mapf func(string, string) []KeyValue,
 
 func do_map_work(mapf func(string, string) []KeyValue,
 				 reply *Reply) {
-	filename := reply.Input_File_Name
-	workerid := reply.Worker_Id
+	// start map work
+	// map任务一个InputFile
+	filename := reply.InputFileName[0]
+	workid := reply.WorkId
+	NReduce := reply.NReduce
 	file, err := os.Open(filename)
 	if err != nil {
 		log.Fatalf("cannt open %v", filename)
@@ -71,48 +91,122 @@ func do_map_work(mapf func(string, string) []KeyValue,
 	}
 	file.Close()
 	kva := mapf(filename ,string(content))
-	sort.Sort(ByKey(kva))
+
+	// open NReduce file
+	encs := []*json.Encoder{}
+	files := []*os.File{}
+	for i := 0; i < NReduce; i++ {
+		prefix := "mr-"
+		// 以mr开头的临时文件, Rename后file不存在了
+		ofile, _ := ioutil.TempFile("./map_temp", prefix)
+		enc := json.NewEncoder(ofile)
+		encs = append(encs, enc)
+		files = append(files, ofile)
+	}
+
+	// write intermediate data
+	for i := 0; i < len(kva); i++{
+		index := ihash(kva[i].Key)
+		err := encs[index].Encode(&kva[i])
+		if err != nil {
+			log.Fatal("Map func write intermediate error")
+		}
+	}
+
+	// complete map work
+	// first atomic rename the outfile
+	reduce_id := 0
+	out_file := []string{}
+	for _, file := range files {
+		newname := "./data/mr-" + strconv.Itoa(workid) + "-" + strconv.Itoa(reduce_id)
+		os.Rename("./temp/" + file.Name(), newname)
+		reduce_id++
+		out_file = append(out_file, newname)
+	}
 	
+	complete_request := &Request{}
+	complete_request.OutputFileName = out_file
+	complete_request.WorkId = workid
+
+	complete_reply := &Reply{}
+	if !RequestForWork(complete_request, complete_reply, "Master.complete_map") {
+		log.Fatal("ReuqestForWork fialed")
+	}
+
 }
 
-func do_reduce_work(reply *Reply) {
+func do_reduce_work(reducef func(string, []string) string,
+					reply *Reply) {
+	// start reduce work
+	// reduce任务NReduce个InputFile
+	filename := reply.InputFileName
+	workid := reply.WorkId
 
+	intermediate := []KeyValue{}
+	var kv KeyValue
+	for _, name := range filename {
+		file, err := os.Open(name)
+		if err != nil {
+			log.Fatalf("cannt open %v", name)
+		}
+		dec := json.NewDecoder(file)
+		for {
+			if err := dec.Decode(&kv); err != nil {
+				break
+			}
+			intermediate = append(intermediate, kv)
+		}
+		file.Close()	
+	}
+	// 按照key排序
+	sort.Sort(ByKey(intermediate))
+
+	prefix := "mr-out-"
+	// 以mr开头的临时文件, Rename后file不存在了
+	ofile, _ := ioutil.TempFile("./reduce_temp", prefix)
+	i := 0
+	for i < len(intermediate) {
+		j := i + 1
+		for j < len(intermediate) && intermediate[j].Key == intermediate[i].Key {
+			j++
+		}
+		values := []string{}
+		for k := i; k < j; k++ {
+			values = append(values, intermediate[k].Value)
+		}
+		output := reducef(intermediate[i].Key, values)
+
+		// this is the correct format for each line of Reduce output.
+		fmt.Fprintf(ofile, "%v %v\n", intermediate[i].Key, output)
+
+		i = j
+	}
+
+	// complete reduce work
+	// first atomic rename the outfile
+	out_file := []string{}
+	newname := "mr-out-" + strconv.Itoa(workid)
+	os.Rename("./reduce_temp/" + ofile.Name(), newname)
+	out_file = append(out_file, newname)
+	
+	complete_request := &Request{}
+	complete_request.OutputFileName = out_file
+	complete_request.WorkId = workid
+
+	complete_reply := &Reply{}
+	if !RequestForWork(complete_request, complete_reply, "Master.complete_reduce") {
+		log.Fatal("ReuqestForWork fialed")
+	}
 }
 
 func do_wait_work(reply *Reply) {
-
+	// 等待1s, 然后自动进入了do_work 循环，再次请求数据
+	time.Sleep(time.Second)
 }
 
-func do_finish_work(reply *Reply) {
-
-}
-
-func RequestForWork(request *Request, reply *Reply) bool {
+func RequestForWork(request *Request, reply *Reply, worktype string) bool {
 	// request for work
-	return call("Master.GetWork", &request, &reply)
-}
-
-//
-// example function to show how to make an RPC call to the master.
-//
-// the RPC argument and reply types are defined in rpc.go.
-//
-func CallExample() {
-
-	// declare an argument structure.
-	args := ExampleArgs{}
-
-	// fill in the argument(s).
-	args.X = 99
-
-	// declare a reply structure.
-	reply := ExampleReply{}
-
-	// send the RPC request, wait for the reply.
-	call("Master.Example", &args, &reply)
-
-	// reply.Y should be 100.
-	fmt.Printf("reply.Y %v\n", reply.Y)
+	return call(worktype, &request, &reply)
 }
 
 //

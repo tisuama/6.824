@@ -9,22 +9,11 @@ package mr
 import "os"
 import "strconv"
 
-//
-// example to show how to declare the arguments
-// and reply for an RPC.
-//
-
-type ExampleArgs struct {
-	X int
-}
-
-type ExampleReply struct {
-	Y int
-}
-
 // Add your RPC definitions here.
 type Request struct {
-	Output_File_Name string
+	WorkId int
+	InputFileName string
+	OutputFileName []string
 }
 
 type Reply struct {
@@ -32,9 +21,10 @@ type Reply struct {
 	// case 2: reduce
 	// case 3: wait
 	// case 4: all_work_done
-	Worker_Type string
-	Worker_Id int
-	Input_File_Name string	
+	WorkType string
+	WorkId int
+	InputFileName []string
+	NReduce int
 }
 
 // Cook up a unique-ish UNIX-domain socket name
