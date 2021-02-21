@@ -1,0 +1,20 @@
+2021/02/21 19:51:24 === Start Master Thread ===
+2021/02/21 19:51:24 MakeMaster: Append 0 pg-being_ernest.txt
+2021/02/21 19:51:24 MakeMaster: Append 1 pg-dorian_gray.txt
+2021/02/21 19:51:24 MakeMaster: Append 2 pg-frankenstein.txt
+2021/02/21 19:51:24 MakeMaster: Append 3 pg-grimm.txt
+2021/02/21 19:51:24 MakeMaster: Append 4 pg-huckleberry_finn.txt
+2021/02/21 19:51:24 MakeMaster: Append 5 pg-metamorphosis.txt
+2021/02/21 19:51:24 MakeMaster: Append 6 pg-sherlock_holmes.txt
+2021/02/21 19:51:24 MakeMaster: Append 7 pg-tom_sawyer.txt
+2021/02/21 19:51:24 === Master Start Listen ====
+2021/02/21 19:51:51 AssignMapWork: WorkType map, WorkId 0, InputFileName pg-being_ernest.txt
+2021/02/21 19:51:51 AssignMapWork: WorkType map, WorkId 1, InputFileName pg-dorian_gray.txt
+2021/02/21 19:51:51 AssignMapWork: WorkType map, WorkId 2, InputFileName pg-frankenstein.txt
+2021/02/21 19:51:51 AssignMapWork: WorkType map, WorkId 3, InputFileName pg-grimm.txt
+2021/02/21 19:51:52 AssignMapWork: WorkType map, WorkId 4, InputFileName pg-huckleberry_finn.txt
+2021/02/21 19:51:52 AssignMapWork: WorkType map, WorkId 5, InputFileName pg-metamorphosis.txt
+2021/02/21 19:51:52 AssignMapWork: WorkType map, WorkId 6, InputFileName pg-sherlock_holmes.txt
+2021/02/21 19:51:53 AssignMapWork: WorkType map, WorkId 7, InputFileName pg-tom_sawyer.txt
+2021/02/21 19:51:53 AssignMapWork: All Map Complete
+2021/02/21 19:51:53 === Master Thread End ===

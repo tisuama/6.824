@@ -1,0 +1,144 @@
+2021/02/21 21:00:20 === Start Master Thread ===
+2021/02/21 21:00:20 MakeMaster: Append 0 ../pg-being_ernest.txt
+2021/02/21 21:00:20 MakeMaster: Append 1 ../pg-dorian_gray.txt
+2021/02/21 21:00:20 MakeMaster: Append 2 ../pg-frankenstein.txt
+2021/02/21 21:00:20 MakeMaster: Append 3 ../pg-grimm.txt
+2021/02/21 21:00:20 MakeMaster: Append 4 ../pg-huckleberry_finn.txt
+2021/02/21 21:00:20 MakeMaster: Append 5 ../pg-metamorphosis.txt
+2021/02/21 21:00:20 MakeMaster: Append 6 ../pg-sherlock_holmes.txt
+2021/02/21 21:00:20 MakeMaster: Append 7 ../pg-tom_sawyer.txt
+2021/02/21 21:00:20 === Master Start Listen ====
+2021/02/21 21:00:22 AssignMapWork: WorkType map, WorkId 0, InputFileName ../pg-being_ernest.txt
+2021/02/21 21:00:22 AssignMapWork: WorkType map, WorkId 2, InputFileName ../pg-frankenstein.txt
+2021/02/21 21:00:22 AssignMapWork: WorkType map, WorkId 1, InputFileName ../pg-dorian_gray.txt
+2021/02/21 21:00:22 AssignMapWork: WorkType map, WorkId 3, InputFileName ../pg-grimm.txt
+2021/02/21 21:00:22 CompleteMap: CompleteMapNumber: 1, UnComplete: 7
+2021/02/21 21:00:22 AssignMapWork: WorkType map, WorkId 4, InputFileName ../pg-huckleberry_finn.txt
+2021/02/21 21:00:22 CompleteMap: CompleteMapNumber: 2, UnComplete: 6
+2021/02/21 21:00:22 AssignMapWork: WorkType map, WorkId 5, InputFileName ../pg-metamorphosis.txt
+2021/02/21 21:00:23 AssignMapWork: WorkType map, WorkId 6, InputFileName ../pg-sherlock_holmes.txt
+2021/02/21 21:00:24 AssignMapWork: WorkType map, WorkId 7, InputFileName ../pg-tom_sawyer.txt
+2021/02/21 21:00:24 CompleteMap: CompleteMapNumber: 3, UnComplete: 5
+2021/02/21 21:00:24 AssignMapWork: some map uncomplete, wait some time
+2021/02/21 21:00:25 CompleteMap: CompleteMapNumber: 4, UnComplete: 4
+2021/02/21 21:00:25 AssignMapWork: some map uncomplete, wait some time
+2021/02/21 21:00:25 AssignMapWork: some map uncomplete, wait some time
+2021/02/21 21:00:26 AssignMapWork: some map uncomplete, wait some time
+2021/02/21 21:00:26 AssignMapWork: some map uncomplete, wait some time
+2021/02/21 21:00:27 AssignMapWork: some map uncomplete, wait some time
+2021/02/21 21:00:27 AssignMapWork: some map uncomplete, wait some time
+2021/02/21 21:00:28 AssignMapWork: some map uncomplete, wait some time
+2021/02/21 21:00:28 AssignMapWork: some map uncomplete, wait some time
+2021/02/21 21:00:29 AssignMapWork: some map uncomplete, wait some time
+2021/02/21 21:00:29 AssignMapWork: some map uncomplete, wait some time
+2021/02/21 21:00:30 AssignMapWork: some map uncomplete, wait some time
+2021/02/21 21:00:30 AssignMapWork: some map uncomplete, wait some time
+2021/02/21 21:00:31 AssignMapWork: some map uncomplete, wait some time
+2021/02/21 21:00:31 CompleteMap: CompleteMapNumber: 5, UnComplete: 3
+2021/02/21 21:00:31 AssignMapWork: some map uncomplete, wait some time
+2021/02/21 21:00:31 AssignMapWork: some map uncomplete, wait some time
+2021/02/21 21:00:32 AssignMapWork: some map uncomplete, wait some time
+2021/02/21 21:00:32 AssignMapWork: some map uncomplete, wait some time
+2021/02/21 21:00:32 map_time_alert: map work 1 not done, reassign the work
+2021/02/21 21:00:32 map_time_alert: map work 2 not done, reassign the work
+2021/02/21 21:00:32 AssignMapWork: WorkType map, WorkId 1, InputFileName ../pg-dorian_gray.txt
+2021/02/21 21:00:33 AssignMapWork: WorkType map, WorkId 2, InputFileName ../pg-frankenstein.txt
+2021/02/21 21:00:33 CompleteMap: CompleteMapNumber: 6, UnComplete: 2
+2021/02/21 21:00:33 AssignMapWork: some map uncomplete, wait some time
+2021/02/21 21:00:33 AssignMapWork: some map uncomplete, wait some time
+2021/02/21 21:00:33 map_time_alert: map work 6 not done, reassign the work
+2021/02/21 21:00:33 AssignMapWork: WorkType map, WorkId 6, InputFileName ../pg-sherlock_holmes.txt
+2021/02/21 21:00:34 AssignMapWork: some map uncomplete, wait some time
+2021/02/21 21:00:34 AssignMapWork: some map uncomplete, wait some time
+2021/02/21 21:00:34 AssignMapWork: some map uncomplete, wait some time
+2021/02/21 21:00:35 AssignMapWork: some map uncomplete, wait some time
+2021/02/21 21:00:35 AssignMapWork: some map uncomplete, wait some time
+2021/02/21 21:00:35 AssignMapWork: some map uncomplete, wait some time
+2021/02/21 21:00:36 AssignMapWork: some map uncomplete, wait some time
+2021/02/21 21:00:36 AssignMapWork: some map uncomplete, wait some time
+2021/02/21 21:00:36 AssignMapWork: some map uncomplete, wait some time
+2021/02/21 21:00:37 AssignMapWork: some map uncomplete, wait some time
+2021/02/21 21:00:37 AssignMapWork: some map uncomplete, wait some time
+2021/02/21 21:00:37 AssignMapWork: some map uncomplete, wait some time
+2021/02/21 21:00:38 AssignMapWork: some map uncomplete, wait some time
+2021/02/21 21:00:38 AssignMapWork: some map uncomplete, wait some time
+2021/02/21 21:00:38 AssignMapWork: some map uncomplete, wait some time
+2021/02/21 21:00:39 AssignMapWork: some map uncomplete, wait some time
+2021/02/21 21:00:39 AssignMapWork: some map uncomplete, wait some time
+2021/02/21 21:00:39 AssignMapWork: some map uncomplete, wait some time
+2021/02/21 21:00:40 AssignMapWork: some map uncomplete, wait some time
+2021/02/21 21:00:40 AssignMapWork: some map uncomplete, wait some time
+2021/02/21 21:00:40 AssignMapWork: some map uncomplete, wait some time
+2021/02/21 21:00:41 AssignMapWork: some map uncomplete, wait some time
+2021/02/21 21:00:41 AssignMapWork: some map uncomplete, wait some time
+2021/02/21 21:00:41 AssignMapWork: some map uncomplete, wait some time
+2021/02/21 21:00:42 AssignMapWork: some map uncomplete, wait some time
+2021/02/21 21:00:42 AssignMapWork: some map uncomplete, wait some time
+2021/02/21 21:00:42 map_time_alert: map work 1 not done, reassign the work
+2021/02/21 21:00:42 AssignMapWork: WorkType map, WorkId 1, InputFileName ../pg-dorian_gray.txt
+2021/02/21 21:00:42 CompleteMap: CompleteMapNumber: 7, UnComplete: 1
+2021/02/21 21:00:42 AssignMapWork: some map uncomplete, wait some time
+2021/02/21 21:00:43 AssignMapWork: some map uncomplete, wait some time
+2021/02/21 21:00:43 AssignMapWork: some map uncomplete, wait some time
+2021/02/21 21:00:43 map_time_alert: map work 6 not done, reassign the work
+2021/02/21 21:00:43 AssignMapWork: WorkType map, WorkId 6, InputFileName ../pg-sherlock_holmes.txt
+2021/02/21 21:00:44 AssignMapWork: some map uncomplete, wait some time
+2021/02/21 21:00:44 AssignMapWork: some map uncomplete, wait some time
+2021/02/21 21:00:45 AssignMapWork: some map uncomplete, wait some time
+2021/02/21 21:00:45 AssignMapWork: some map uncomplete, wait some time
+2021/02/21 21:00:46 AssignMapWork: some map uncomplete, wait some time
+2021/02/21 21:00:46 AssignMapWork: some map uncomplete, wait some time
+2021/02/21 21:00:47 AssignMapWork: some map uncomplete, wait some time
+2021/02/21 21:00:47 AssignMapWork: some map uncomplete, wait some time
+2021/02/21 21:00:48 AssignMapWork: some map uncomplete, wait some time
+2021/02/21 21:00:48 AssignMapWork: some map uncomplete, wait some time
+2021/02/21 21:00:49 AssignMapWork: some map uncomplete, wait some time
+2021/02/21 21:00:49 AssignMapWork: some map uncomplete, wait some time
+2021/02/21 21:00:50 CompleteMap: CompleteMapNumber: 8, UnComplete: 0
+2021/02/21 21:00:50 AssignMapWork: All Map Complete
+2021/02/21 21:00:50 AssignMapWork: WorkType reduce, WorkId 0, InputFileName [./data/mr-0-0 ./data/mr-3-0 ./data/mr-4-0 ./data/mr-5-0 ./data/mr-7-0 ./data/mr-2-0 ./data/mr-1-0 ./data/mr-6-0]
+2021/02/21 21:00:50 CompleteReduce: CompleteReduceNumber: 1, UnComplete: 9
+2021/02/21 21:00:50 AssignMapWork: WorkType reduce, WorkId 1, InputFileName [./data/mr-0-1 ./data/mr-3-1 ./data/mr-4-1 ./data/mr-5-1 ./data/mr-7-1 ./data/mr-2-1 ./data/mr-1-1 ./data/mr-6-1]
+2021/02/21 21:00:50 CompleteReduce: CompleteReduceNumber: 2, UnComplete: 8
+2021/02/21 21:00:50 AssignMapWork: WorkType reduce, WorkId 2, InputFileName [./data/mr-0-2 ./data/mr-3-2 ./data/mr-4-2 ./data/mr-5-2 ./data/mr-7-2 ./data/mr-2-2 ./data/mr-1-2 ./data/mr-6-2]
+2021/02/21 21:00:50 AssignMapWork: WorkType reduce, WorkId 3, InputFileName [./data/mr-0-3 ./data/mr-3-3 ./data/mr-4-3 ./data/mr-5-3 ./data/mr-7-3 ./data/mr-2-3 ./data/mr-1-3 ./data/mr-6-3]
+2021/02/21 21:00:50 CompleteReduce: CompleteReduceNumber: 3, UnComplete: 7
+2021/02/21 21:00:50 AssignMapWork: WorkType reduce, WorkId 4, InputFileName [./data/mr-0-4 ./data/mr-3-4 ./data/mr-4-4 ./data/mr-5-4 ./data/mr-7-4 ./data/mr-2-4 ./data/mr-1-4 ./data/mr-6-4]
+2021/02/21 21:00:50 CompleteReduce: CompleteReduceNumber: 4, UnComplete: 6
+2021/02/21 21:00:50 AssignMapWork: WorkType reduce, WorkId 5, InputFileName [./data/mr-0-5 ./data/mr-3-5 ./data/mr-4-5 ./data/mr-5-5 ./data/mr-7-5 ./data/mr-2-5 ./data/mr-1-5 ./data/mr-6-5]
+2021/02/21 21:00:50 CompleteReduce: CompleteReduceNumber: 5, UnComplete: 5
+2021/02/21 21:00:50 AssignMapWork: WorkType reduce, WorkId 6, InputFileName [./data/mr-0-6 ./data/mr-3-6 ./data/mr-4-6 ./data/mr-5-6 ./data/mr-7-6 ./data/mr-2-6 ./data/mr-1-6 ./data/mr-6-6]
+2021/02/21 21:00:50 CompleteReduce: CompleteReduceNumber: 6, UnComplete: 4
+2021/02/21 21:00:50 AssignMapWork: WorkType reduce, WorkId 7, InputFileName [./data/mr-0-7 ./data/mr-3-7 ./data/mr-4-7 ./data/mr-5-7 ./data/mr-7-7 ./data/mr-2-7 ./data/mr-1-7 ./data/mr-6-7]
+2021/02/21 21:00:50 CompleteReduce: CompleteReduceNumber: 7, UnComplete: 3
+2021/02/21 21:00:50 AssignMapWork: WorkType reduce, WorkId 8, InputFileName [./data/mr-0-8 ./data/mr-3-8 ./data/mr-4-8 ./data/mr-5-8 ./data/mr-7-8 ./data/mr-2-8 ./data/mr-1-8 ./data/mr-6-8]
+2021/02/21 21:00:50 CompleteReduce: CompleteReduceNumber: 8, UnComplete: 2
+2021/02/21 21:00:50 AssignMapWork: WorkType reduce, WorkId 9, InputFileName [./data/mr-0-9 ./data/mr-3-9 ./data/mr-4-9 ./data/mr-5-9 ./data/mr-7-9 ./data/mr-2-9 ./data/mr-1-9 ./data/mr-6-9]
+2021/02/21 21:00:50 AssignReduceWork: some reduce uncomplete, wait some time
+2021/02/21 21:00:51 AssignReduceWork: some reduce uncomplete, wait some time
+2021/02/21 21:00:51 AssignReduceWork: some reduce uncomplete, wait some time
+2021/02/21 21:00:52 AssignReduceWork: some reduce uncomplete, wait some time
+2021/02/21 21:00:52 AssignReduceWork: some reduce uncomplete, wait some time
+2021/02/21 21:00:53 AssignReduceWork: some reduce uncomplete, wait some time
+2021/02/21 21:00:53 AssignReduceWork: some reduce uncomplete, wait some time
+2021/02/21 21:00:54 AssignReduceWork: some reduce uncomplete, wait some time
+2021/02/21 21:00:54 AssignReduceWork: some reduce uncomplete, wait some time
+2021/02/21 21:00:55 AssignReduceWork: some reduce uncomplete, wait some time
+2021/02/21 21:00:55 AssignReduceWork: some reduce uncomplete, wait some time
+2021/02/21 21:00:56 AssignReduceWork: some reduce uncomplete, wait some time
+2021/02/21 21:00:56 AssignReduceWork: some reduce uncomplete, wait some time
+2021/02/21 21:00:57 AssignReduceWork: some reduce uncomplete, wait some time
+2021/02/21 21:00:57 AssignReduceWork: some reduce uncomplete, wait some time
+2021/02/21 21:00:58 CompleteReduce: CompleteReduceNumber: 9, UnComplete: 1
+2021/02/21 21:00:58 AssignReduceWork: some reduce uncomplete, wait some time
+2021/02/21 21:00:58 AssignReduceWork: some reduce uncomplete, wait some time
+2021/02/21 21:00:58 AssignReduceWork: some reduce uncomplete, wait some time
+2021/02/21 21:00:59 AssignReduceWork: some reduce uncomplete, wait some time
+2021/02/21 21:00:59 AssignReduceWork: some reduce uncomplete, wait some time
+2021/02/21 21:00:59 AssignReduceWork: some reduce uncomplete, wait some time
+2021/02/21 21:01:00 AssignReduceWork: some reduce uncomplete, wait some time
+2021/02/21 21:01:00 reduce_time_alert: reduce work 9 not done, reassign the work
+2021/02/21 21:01:00 AssignMapWork: WorkType reduce, WorkId 9, InputFileName [./data/mr-0-9 ./data/mr-3-9 ./data/mr-4-9 ./data/mr-5-9 ./data/mr-7-9 ./data/mr-2-9 ./data/mr-1-9 ./data/mr-6-9]
+2021/02/21 21:01:00 CompleteReduce: CompleteReduceNumber: 10, UnComplete: 0
+2021/02/21 21:01:00 AssignReduceWork: All Reduce Complete
+2021/02/21 21:01:01 === Master Thread End ===

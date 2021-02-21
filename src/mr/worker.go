@@ -13,6 +13,8 @@ import (
 	"time"
 )
 
+
+var logger_work *log.Logger
 //
 // Map functions return a slice of KeyValue.
 //
@@ -46,14 +48,17 @@ func ihash(key string) int {
 func Worker(mapf func(string, string) []KeyValue,
 	reducef func(string, []string) string) {
 
+	// 初始化log模块
+	file, _ := os.Create("work_log.txt")
+	logger_work = log.New(file, "", log.Ldate | log.Ltime)
+	logger_work.Printf("=== Start Work Thread ===")
 	// Your worker implementation here.
 	for {
 		request := &Request{}
 		reply := &Reply{}
 		// 如果没有请求到数据，直接退出了
-		if !RequestForWork(request, reply, "Master.assign_work") {
-			log.Fatal("ReuqestForWork fialed")
-			break
+		if !RequestForWork(request, reply, "Master.AssignWork") {
+			log.Fatal("Work Rquest Master.AssignWork fialed")
 		}
 		switch reply.WorkType {
 		case "map":
@@ -81,6 +86,8 @@ func do_map_work(mapf func(string, string) []KeyValue,
 	filename := reply.InputFileName[0]
 	workid := reply.WorkId
 	NReduce := reply.NReduce
+	logger_work.Printf("do_map_work, workid %v filename %v NReduce %v", workid, filename, NReduce)
+	
 	file, err := os.Open(filename)
 	if err != nil {
 		log.Fatalf("cannt open %v", filename)
@@ -95,6 +102,7 @@ func do_map_work(mapf func(string, string) []KeyValue,
 	// open NReduce file
 	encs := []*json.Encoder{}
 	files := []*os.File{}
+	os.MkdirAll("./map_temp", 0777)
 	for i := 0; i < NReduce; i++ {
 		prefix := "mr-"
 		// 以mr开头的临时文件, Rename后file不存在了
@@ -106,7 +114,7 @@ func do_map_work(mapf func(string, string) []KeyValue,
 
 	// write intermediate data
 	for i := 0; i < len(kva); i++{
-		index := ihash(kva[i].Key)
+		index := ihash(kva[i].Key) % NReduce
 		err := encs[index].Encode(&kva[i])
 		if err != nil {
 			log.Fatal("Map func write intermediate error")
@@ -117,9 +125,15 @@ func do_map_work(mapf func(string, string) []KeyValue,
 	// first atomic rename the outfile
 	reduce_id := 0
 	out_file := []string{}
+	os.MkdirAll("./data", 0777)
 	for _, file := range files {
 		newname := "./data/mr-" + strconv.Itoa(workid) + "-" + strconv.Itoa(reduce_id)
-		os.Rename("./temp/" + file.Name(), newname)
+		oldname := file.Name()
+		err := os.Rename(oldname, newname)
+		logger_work.Printf("do_map_work: rename oldname %v newname %v", oldname, newname)
+		if err != nil {
+			log.Fatalf("Rename failed")
+		}
 		reduce_id++
 		out_file = append(out_file, newname)
 	}
@@ -129,8 +143,8 @@ func do_map_work(mapf func(string, string) []KeyValue,
 	complete_request.WorkId = workid
 
 	complete_reply := &Reply{}
-	if !RequestForWork(complete_request, complete_reply, "Master.complete_map") {
-		log.Fatal("ReuqestForWork fialed")
+	if !RequestForWork(complete_request, complete_reply, "Master.CompleteMap") {
+		log.Fatal("Master.CompleteMap fialed")
 	}
 
 }
@@ -141,6 +155,8 @@ func do_reduce_work(reducef func(string, []string) string,
 	// reduce任务NReduce个InputFile
 	filename := reply.InputFileName
 	workid := reply.WorkId
+
+	logger_work.Printf("do_reduce_work, workid %v filename %v", workid, filename)
 
 	intermediate := []KeyValue{}
 	var kv KeyValue
@@ -161,6 +177,7 @@ func do_reduce_work(reducef func(string, []string) string,
 	// 按照key排序
 	sort.Sort(ByKey(intermediate))
 
+	os.MkdirAll("./reduce_temp", 0777)
 	prefix := "mr-out-"
 	// 以mr开头的临时文件, Rename后file不存在了
 	ofile, _ := ioutil.TempFile("./reduce_temp", prefix)
@@ -186,7 +203,7 @@ func do_reduce_work(reducef func(string, []string) string,
 	// first atomic rename the outfile
 	out_file := []string{}
 	newname := "mr-out-" + strconv.Itoa(workid)
-	os.Rename("./reduce_temp/" + ofile.Name(), newname)
+	os.Rename(ofile.Name(), newname)
 	out_file = append(out_file, newname)
 	
 	complete_request := &Request{}
@@ -194,8 +211,8 @@ func do_reduce_work(reducef func(string, []string) string,
 	complete_request.WorkId = workid
 
 	complete_reply := &Reply{}
-	if !RequestForWork(complete_request, complete_reply, "Master.complete_reduce") {
-		log.Fatal("ReuqestForWork fialed")
+	if !RequestForWork(complete_request, complete_reply, "Master.CompleteReduce") {
+		log.Fatal("Master.CompleteReduce fialed")
 	}
 }
 
@@ -222,12 +239,13 @@ func call(rpcname string, args interface{}, reply interface{}) bool {
 		log.Fatal("dialing:", err)
 	}
 	defer c.Close()
-
+	
 	err = c.Call(rpcname, args, reply)
+
+	logger_work.Printf("call: received reply %v", rpcname)
 	if err == nil {
 		return true
 	}
-
-	fmt.Println(err)
+	fmt.Println(err)	
 	return false
 }
