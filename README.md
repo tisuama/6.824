@@ -2,9 +2,6 @@
 - [x] Lab 1: MapReduce
 - [ ] Lab 2: Raft
 - [ ] Lab 3: KV Raft
-<<<<<<< HEAD
-- [ ] Lab 4: Sharded KV
-=======
 - [ ] Lab 4: Sharded KV
 
 
@@ -18,4 +15,3 @@ Q1：`Lab1`比较简单，分别实现`Worker.go`和`Master.go`里的代码逻�
 
 ![mapreduce](https://user-images.githubusercontent.com/10417157/113435914-51f2f380-9416-11eb-9589-0fcccd22b051.png)
 
->>>>>>> 576e208 (Update README.md)
