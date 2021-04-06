@@ -56,7 +56,10 @@ type ApplyMsg struct {
 	CommandIndex int
 }
 
-type LogEntry struct {		
+type LogEntry struct {
+	Command 	interface{}
+	Term 		int64
+	LogIndex 	int64
 }
 
 //
@@ -195,7 +198,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	} else { 
 		if args.Term > rf.term {
 			// 转为Follower状态
-			DPrintf("server %v switchToFollower because rf.term: %v, args.LastLogTerm: %v", rf.me, rf.term, args.LastLogTerm)
+			DPrintf("server %v switchToFollower because rf.term: %v, args.Term: %v", rf.me, rf.term, args.Term)
 			rf.switchToFollower(args.Term)
 		}
 		// 更新reply的Term
@@ -212,6 +215,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 			if rf.last_log_term < args.LastLogTerm ||
 			   (rf.last_log_term == args.LastLogTerm && 
 			   rf.last_log_index <= args.LastLogIndex) {
+				DPrintf("server %v vote for candiate %v", rf.me, args.CandidateId)
 				reply.VoteGranted = true
 				rf.vote_for = args.CandidateId
 				// c) 投票后更新last_hb_time
@@ -224,8 +228,11 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 
 func (rf *Raft) HandleHeartBeatMsg(args  *RequestAppendEntriesArgs, 
 								   reply *RequestAppendEntriesReply) {
+	
+	DPrintf("server %v get heartbeat msg", rf.me)
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
+	DPrintf("server %v receive heartbeat args.Term: %v, rf.term: %v", rf.me, args.Term, rf.term)
 	if args.Term < rf.term {
 		reply.Success = false
 		reply.Term = rf.term
@@ -237,7 +244,7 @@ func (rf *Raft) HandleHeartBeatMsg(args  *RequestAppendEntriesArgs,
 	}
 	// a)收到AppendEntries后重置last_hb_time
 	rf.last_hb_time = time.Now().UnixNano()
-	DPrintf("server %v received heartbeat, reset the election_timeout clock: %v", rf.me, rf.last_hb_time)
+	DPrintf("server %v receive heartbeat, reset the election_timeout clock: %v", rf.me, rf.last_hb_time)
 	reply.Success = true
 	reply.Term = rf.term
 }
@@ -280,6 +287,7 @@ func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *Reques
 func (rf *Raft) sendHeartBeatMsg(server int, 
 								 args   *RequestAppendEntriesArgs, 
 								 reply  *RequestAppendEntriesReply) bool {
+	DPrintf("leader %v sendHeartBeatMsg to server %v", rf.me, server)
 	ok := rf.peers[server].Call("Raft.HandleHeartBeatMsg", args, reply)
 	return ok
 }
@@ -330,7 +338,7 @@ func (rf *Raft) killed() bool {
 }
 
 func (rf *Raft) startHeartBeat() {
-	DPrintf("server: %v start heartbeat", rf.me)
+	DPrintf("server %v start heartbeat", rf.me)
 	var wg sync.WaitGroup
 	reply_res := make([]*RequestAppendEntriesReply, 0, 10)	
 	rf.mu.Lock()
@@ -364,8 +372,8 @@ func (rf *Raft) startHeartBeat() {
 
 func (rf *Raft) startLeaderElection() {
 	DPrintf("server %v start leader election", rf.me)
+	vote_num, reply_num := 1, 0
 	var wg sync.WaitGroup
-	reply_res := make([]*RequestVoteReply, 0, 10)	
 	// 构造request，可以通用
 	rf.mu.Lock()
 	
@@ -388,45 +396,61 @@ func (rf *Raft) startLeaderElection() {
 		}
 		wg.Add(1)
 		reply := &RequestVoteReply{}
-		reply_res = append(reply_res, reply)
 		go func(server int) {
 			defer wg.Done()
-			rf.sendRequestVote(server, request, reply)
+			ok := rf.sendRequestVote(server, request, reply)
+			if !ok {
+				DPrintf("server %v sendRequestVote back network failure from %v", rf.me, server)
+				return
+			}	
+			rf.mu.Lock()
+			reply_num++		
+			if ok {
+				DPrintf("server %v's sendRequestVote back form %v, r.Term: %v, r.VoteGranted: %v, rf.term: %v", rf.me, server, reply.Term, reply.VoteGranted, rf.term)
+				// 请求过期了
+				if reply.Term < rf.term {
+					return
+				}
+				if reply.Term > request.Term {
+					rf.switchToFollower(reply.Term)
+				} else {
+					if reply.VoteGranted {
+						vote_num++
+					}
+				}
+				if vote_num > len(rf.peers) / 2 {
+					// 判断当前状态是否还是Candiate
+					if rf.state == Candiate && vote_num > len(rf.peers) / 2 {
+						rf.state = Leader
+						DPrintf("server %v become leader", rf.me)
+						// 一旦选举成功，发送empty AppendEntriesRPC
+						go rf.heartBeatClock()
+					}
+				}
+				rf.mu.Unlock()
+			}
 		}(idx)
 	}
 	rf.mu.Unlock()
 	wg.Wait()
-	vote_num := 1
-	rf.mu.Lock()
-	defer rf.mu.Unlock()
-	if rf.state != Candiate {
-		return 
-	}
-	for _, r := range reply_res {
-		DPrintf("vote info: r.Term: %v, r.VoteGranted: %v", r.Term, r.VoteGranted)
-		if r.Term > request.Term {
-			// 转为Follower状态
-			rf.switchToFollower(r.Term)
-		} else if r.VoteGranted {
-			vote_num++
-		}
-	}
-	DPrintf("server: %v, state: %v, vote_num: %v", rf.me, rf.state, vote_num)
-	// 判断当前状态是否还是candiate
-	if rf.state == Candiate && vote_num > len(rf.peers) / 2 {
-		rf.state = Leader
-		DPrintf("server: %v become leader", rf.me)
-		// 一旦选举成功，发送empty AppendEntriesRPC
-		go rf.heartBeatClock()
-	}
+	DPrintf("server %v wg done, killed: %v", rf.me, rf.killed())
 }
 
 
 func (rf *Raft) heartBeatClock() {
+	DPrintf("server %v start a new heartBeatClock", rf.me)
 	for true {
+		rf.mu.Lock()
+		if rf.state != Leader {
+			rf.mu.Unlock()
+			DPrintf("server %v stop heartBeatClock", rf.me)
+			break
+		}
+		rf.mu.Unlock()
 		go rf.startHeartBeat()
 		time.Sleep(time.Duration(HB_INTERVAL) * time.Millisecond)
 	}
+	DPrintf("server %v is dead: %v, state: %v", rf.me, rf.killed(), rf.state)
 }
 
 func (rf *Raft) leaderElectionClock() {
