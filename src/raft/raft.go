@@ -16,7 +16,6 @@ package raft
 //   should send an ApplyMsg to the service (or tester)
 //   in the same server.
 //
-
 import "sync"
 import "sync/atomic"
 import "../labrpc"
@@ -24,7 +23,6 @@ import "time"
 import "math/rand"
 // import "bytes"
 // import "../labgob"
-
 
 const MIN_ELECTION_TIMEOUT = 300
 const MAX_ELECTION_TIMEOUT = 450
@@ -39,6 +37,14 @@ const (
 	Candiate
 )
 
+type AppendEntryStatus int
+const (
+	OK AppendEntryStatus = iota
+	LowTermNumber
+	HighLogIndex
+	NotMatchLogTerm
+	NotFlushToDisk
+)
 //
 // as each Raft peer becomes aware that successive log entries are
 // committed, the peer should send an ApplyMsg to the service (or
@@ -58,8 +64,8 @@ type ApplyMsg struct {
 
 type LogEntry struct {
 	Command 	interface{}
-	Term 		int64
-	LogIndex 	int64
+	Term 		int
+	LogIndex 	int
 }
 
 //
@@ -75,15 +81,30 @@ type Raft struct {
 	// Your data here (2A, 2B, 2C).
 	// Look at the paper's Figure 2 for a description of what
 	// state a Raft server must maintain.
-	term 	  	      int64
+	
+	// persist state on all servers
+	term 	  	      int
 	vote_for 		  int
+	log		  		  *LogStorage
+
+	// volatile state on all servers
+	committed_index   int
+	last_applied	  int
+	last_log_index    int
+	last_log_term	  int
+
+	// volatile state on leader 成为leader是初始化
+	next_index		  []int // 保存每个server的next_index
+	match_index		  []int // 保存每个server的match_index
+
+	// self defined param	
 	state 			  State
 	election_timeout  int
 	last_hb_time      int64
 
-	// 先用这俩代替
-	last_log_index    int64
-	last_log_term     int64
+	// Applych
+	applyCh 		  chan ApplyMsg
+	applyCond		  *sync.Cond	
 }
 
 // return currentTerm and whether this server
@@ -93,7 +114,7 @@ func (rf *Raft) GetState() (int, bool) {
 	// Your code here (2A).
 	rf.mu.Lock()
 	defer rf.mu.Unlock()	
-	return int(rf.term), bool(rf.state == Leader)
+	return rf.term, rf.state == Leader
 }
 
 //
@@ -144,10 +165,10 @@ func (rf *Raft) readPersist(data []byte) {
 //
 type RequestVoteArgs struct {
 	// Your data here (2A, 2B).
-	Term 		 int64
+	Term 		 int
 	CandidateId  int
-	LastLogIndex int64
-	LastLogTerm  int64
+	LastLogIndex int
+	LastLogTerm  int
 }
 
 //
@@ -156,27 +177,28 @@ type RequestVoteArgs struct {
 //
 type RequestVoteReply struct {
 	// Your data here (2A).
-	Term 	 	 int64
+	Term 	 	 int
 	VoteGranted  bool	
 }
 
 
 type RequestAppendEntriesArgs struct {
-	Term         int64
+	Term         int
 	LeaderId	 int
-	PrevLogIndex int64
-	PrevLogTerm  int64
+	PrevLogIndex int
+	PrevLogTerm  int
 	Entries      []*LogEntry
-	LeaderCommit int64
+	LeaderCommit int
 }
 
 type RequestAppendEntriesReply struct {
-	Term         int64
+	Term         int
 	Success      bool
+	Status		 AppendEntryStatus
 }
 
 // 调用此函数前必须带锁
-func (rf *Raft) switchToFollower(term int64) {
+func (rf *Raft) switchToFollower(term int) {
 	DPrintf("server %v switchToFollower, vote_for: %v, term: %v", rf.me, -1, term)
 	rf.state = Follower
 	rf.term = term
@@ -211,23 +233,24 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 			return
 		} else {
 			// case 1: last_log_term更大
-			// Todo
-			if rf.last_log_term < args.LastLogTerm ||
-			   (rf.last_log_term == args.LastLogTerm && 
-			   rf.last_log_index <= args.LastLogIndex) {
+			if rf.log.lastLogTerm() < args.LastLogTerm ||
+			   (rf.log.lastLogTerm() == args.LastLogTerm && 
+			   rf.log.lastLogIndex() <= args.LastLogIndex) {
 				DPrintf("server %v vote for candiate %v", rf.me, args.CandidateId)
 				reply.VoteGranted = true
 				rf.vote_for = args.CandidateId
 				// c) 投票后更新last_hb_time
 				rf.last_hb_time = time.Now().UnixNano()
 				return
+			} else {
+				DPrintf("server %v reject to votefor candiate %v because it's log is not up-to-date", rf.me, args.CandidateId)
 			}
 		}
 	}
 }
 
-func (rf *Raft) HandleHeartBeatMsg(args  *RequestAppendEntriesArgs, 
-								   reply *RequestAppendEntriesReply) {
+func (rf *Raft) HeartBeat(args  *RequestAppendEntriesArgs, 
+						  reply *RequestAppendEntriesReply) {
 	
 	DPrintf("server %v get heartbeat msg", rf.me)
 	rf.mu.Lock()
@@ -244,11 +267,70 @@ func (rf *Raft) HandleHeartBeatMsg(args  *RequestAppendEntriesArgs,
 	}
 	// a)收到AppendEntries后重置last_hb_time
 	rf.last_hb_time = time.Now().UnixNano()
+	rf.updateCommittedIndex(args.LeaderCommit)
 	DPrintf("server %v receive heartbeat, reset the election_timeout clock: %v", rf.me, rf.last_hb_time)
 	reply.Success = true
 	reply.Term = rf.term
 }
 
+// 使用此函数之前需要带锁
+func (rf *Raft) updateCommittedIndex(committed int ) {
+
+	// 设置commit_index
+	if committed > rf.committed_index {
+		if committed < rf.log.lastLogIndex() {
+			rf.committed_index = committed
+		} else {
+			rf.committed_index = rf.log.lastLogIndex()
+		}
+		DPrintf("server %v update committed_index to %v", rf.me, rf.committed_index)
+		rf.applyCond.Signal()	
+	}
+}
+
+func (rf *Raft) AppendEntries(args  *RequestAppendEntriesArgs, 
+						  	  reply *RequestAppendEntriesReply) {
+	DPrintf("server %v get append entries msg, args.Term: %v, rf.term: %v, args.PrevLogIndex: %v, rf.lastLogIndex: %v, args.PrevLogTerm: %v, rf.lastLogTerm: %v", rf.me, args.Term, rf.term, args.PrevLogIndex, rf.log.lastLogIndex(), args.PrevLogTerm, rf.log.lastLogTerm()) 
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	reply.Success = false
+	// 会发生args.Term > rf.term嘛
+	reply.Term = rf.term
+	// 大于当前server term，先将当前server转为Follower
+	if args.Term > rf.term {
+		rf.switchToFollower(args.Term)
+	}
+	// 判断异常情况
+	if args.Term < rf.term {
+		DPrintf("server %v ERROR, LowTermNumber, command: %v", rf.me, args.Entries[0].Command)
+		reply.Status = LowTermNumber
+		return
+	}
+	if args.PrevLogIndex > rf.log.lastLogIndex() {
+		DPrintf("server %v ERROR, HighLogIndex, command: %v", rf.me, args.Entries[0].Command)
+		reply.Status = HighLogIndex
+		return
+	}
+	if rf.log.lastLogTerm() != args.PrevLogTerm {
+		DPrintf("server %v ERROR, NotMatchLogTerm, command: %v", rf.me, args.Entries[0].Command)
+		reply.Status = NotMatchLogTerm
+		return 
+	}
+	// 对多余的日志进行截断
+	if rf.log.truncateSuffix(args.PrevLogIndex) == -1 {
+		DPrintf("server %v ERROR, NotFlushToDisk", rf.me)
+		reply.Status = NotFlushToDisk
+		return
+	}
+	DPrintf("server %v SUCCESS, command: %v", rf.me, args.Entries[0].Command)
+	// Append LogEntry 暂时先不管AppendEntries返回值
+	rf.log.appendEntries(args.Entries)
+	rf.updateCommittedIndex(args.LeaderCommit)
+	// 返回
+	reply.Success = true
+	reply.Status = OK
+	return 	
+}
 //
 // example code to send a RequestVote RPC to a server.
 // server is the index of the target server in rf.peers[].
@@ -288,7 +370,16 @@ func (rf *Raft) sendHeartBeatMsg(server int,
 								 args   *RequestAppendEntriesArgs, 
 								 reply  *RequestAppendEntriesReply) bool {
 	DPrintf("leader %v sendHeartBeatMsg to server %v", rf.me, server)
-	ok := rf.peers[server].Call("Raft.HandleHeartBeatMsg", args, reply)
+	ok := rf.peers[server].Call("Raft.HeartBeat", args, reply)
+	return ok
+}
+
+// send是阻塞的，且sned的时候是没加锁的
+func (rf *Raft) sendAppendEntriesRPC(server int, 
+								   args   *RequestAppendEntriesArgs, 
+								   reply  *RequestAppendEntriesReply) bool {
+	DPrintf("leader %v sendAppendEntriesRPC to server %v", rf.me, server)
+	ok := rf.peers[server].Call("Raft.AppendEntries", args, reply)
 	return ok
 }
 //
@@ -305,15 +396,155 @@ func (rf *Raft) sendHeartBeatMsg(server int,
 // term. the third return value is true if this server believes it is
 // the leader.
 //
+func (rf *Raft) buildAppendEntriesArgs(server int) (*RequestAppendEntriesArgs, 
+									 				*RequestAppendEntriesReply) {
+	// buildArgs
+	index := rf.next_index[server]
+	DPrintf("leader %v's next_index for server %v is %v", rf.me, server, rf.next_index[server])
+	// 从leader的log中获取
+	entry := rf.log.getEntry(index)
+	if entry == nil {
+		return nil, nil
+	}
+	DPrintf("leader %v get LogIndex %v's entry info for server %v, logindex: %v, command: %v", rf.me, index, server, entry.LogIndex, entry.Command)
+	request := &RequestAppendEntriesArgs{}
+	request.Term = rf.term
+	request.LeaderId = rf.me
+	request.LeaderCommit = rf.committed_index
+	request.Entries = append(request.Entries, entry)
+	request.PrevLogTerm = rf.log.getLogTerm(index - 1) 
+	request.PrevLogIndex = rf.log.getLogIndex(index - 1)
+	
+	reply := &RequestAppendEntriesReply{}
+	return request, reply
+}
+
+
+func (rf *Raft) doAppendEntriesRPC(server, index int) {
+	rf.mu.Lock()
+	if rf.next_index[server] != index {
+		rf.mu.Unlock()
+		DPrintf("server %v return because next_index = %v don't match index = %v", server, rf.next_index[server], index)
+		return;
+	}
+	request, reply := rf.buildAppendEntriesArgs(server)
+	if request == nil || reply == nil {
+		// 细节
+		if rf.next_index[server] > 0 {
+			rf.next_index[server]--
+			DPrintf("leader %v next_index for server %v sub 1 because get no entry", rf.me, server)
+			go rf.doAppendEntriesRPC(server, rf.next_index[server])
+		}
+		rf.mu.Unlock()
+		return 
+	}
+	DPrintf("leader %v buildAppendEntriesArgs to %v, LogIndex: %v", rf.me, server, request.Entries[0].LogIndex)
+	rf.mu.Unlock()
+	// send AppendEntriesRPC
+	ok := rf.sendAppendEntriesRPC(server, request, reply)
+	DPrintf("leader %v get AppendEntriesRPC reply from server %v, ok: %v, Status: %v", rf.me, server, ok, reply.Status)
+	if ok {
+		rf.mu.Lock()
+		defer rf.mu.Unlock()
+		// 丢弃了这个包，如果没有，那肯定还是leader
+		if request.Term != rf.term {
+			DPrintf("leader %v do server %v's append entries reply, request.Term != rf.term", rf.me, server)
+			return
+		}
+		// 收到更大的Term
+		if reply.Term > rf.term {
+			DPrintf("leader %v do server %v's append entries reply, switchToFollower", rf.me, server)
+			rf.switchToFollower(reply.Term)
+			return 
+		}
+		// 成功则处理
+		switch reply.Status {
+		case OK:
+			DPrintf("leader %v do serve %v's append entries reply, reply.Status is OK, command: %v", rf.me, server, request.Entries[0].Command)
+			rf.next_index[server]++
+			rf.match_index[server] = request.PrevLogIndex + len(request.Entries)
+			// Todo: 找到最大的N，leader和Follower的committed_index有不同的更新方式，
+			// 更新后都需要通过Cond触发ApplyMsg的操作，应用到StateMachine
+			cur_committed_index := rf.match_index[server]
+			// 大于当前committed_index才有更新价值
+			DPrintf("leader %v process result, server: %v, next_index: %v, match_index: %v, cur_committed_index: %v, rf.committed_index: %v", rf.me, server, rf.next_index[server], rf.match_index[server], cur_committed_index, rf.committed_index)
+			if cur_committed_index > rf.committed_index {
+				count := 0
+				for idx, _ := range rf.peers{
+					if rf.match_index[idx] >= cur_committed_index {
+						count++
+						DPrintf("leader %v inc count to %v because server %v's match_index is %v and cur_committed_index is %v", rf.me, count, idx, rf.match_index[idx], cur_committed_index)
+					}
+				}
+				if count > len(rf.peers) / 2 {
+					if cur_committed_index > rf.committed_index {
+						rf.committed_index = cur_committed_index
+						rf.applyCond.Signal()
+						DPrintf("leader %v update committed_index to %v because count is %v  and send applyCond Signal", rf.me, rf.committed_index, count)
+					}
+				}
+			}
+			if rf.next_index[server] <= rf.log.lastLogIndex() {
+				DPrintf("leader %v comtinue to sendAppendEntriesRPC info to server %v because the next_index for server is %v, but leader's lastLogIndex is %v", rf.me, server, rf.next_index[server], rf.log.lastLogIndex())
+				// next_index开始增加
+				go rf.doAppendEntriesRPC(server, rf.next_index[server])
+			}
+		case LowTermNumber, HighLogIndex, NotFlushToDisk, NotMatchLogTerm:
+			DPrintf("server %v do server %v's append entries reply, reply.Status is ERROR", rf.me, server)
+			// 出现问题，先将next_index减一，后面再优化
+			if rf.next_index[server] > 0 {
+				rf.next_index[server]--
+				go rf.doAppendEntriesRPC(server, index - 1)
+			} else {
+				return 
+			}
+		default:
+			DPrintf("append entries reply error")
+		}
+		return 
+	} else { // 问题：server重新上线后总是没有返回值？
+		DPrintf("server %v do server %v's append entries reply, RPC ERROR", rf.me, server)
+		go rf.doAppendEntriesRPC(server, index)
+		return 
+	}
+}
+
 func (rf *Raft) Start(command interface{}) (int, int, bool) {
-	index := -1
-	term := -1
-	isLeader := true
 
 	// Your code here (2B).
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	last_log_index := rf.log.lastLogIndex()
+	// 细节
+	if rf.state != Leader {
+		return last_log_index + 1, rf.term, false
+	}
+	DPrintf("server %v Start, command: %v", rf.me, command)
+	entry := &LogEntry{}
+	entry.Term = rf.term
+	entry.Command = command
+	// 更新leader自身的match_index
+	entry.LogIndex = rf.next_index[rf.me]
+	entries := make([]*LogEntry, 0)
+	entries = append(entries, entry)
 
+	// add to laeders log
+	rf.log.appendEntry(entry)
+	// 更新leader自身的match_index
+	rf.next_index[rf.me]++
+	// 细节
+	rf.match_index[rf.me] = rf.log.lastLogIndex()
+	DPrintf("update self match index to %v", rf.match_index[rf.me])
 
-	return index, term, isLeader
+	for idx, _ := range rf.peers {
+		if idx == rf.me {
+			continue
+		}
+		// Todo：这里加一个index下标参数
+		DPrintf("leader %v start doAppendEntriesRPC for server %v, index: %v, command: %v", rf.me, idx, rf.next_index[idx], command)
+		go rf.doAppendEntriesRPC(idx, last_log_index + 1)
+	}
+	return last_log_index + 1, rf.term, true
 }
 
 //
@@ -337,34 +568,62 @@ func (rf *Raft) killed() bool {
 	return z == 1
 }
 
+func (rf *Raft) startSendApplyMsg() {
+	for true {
+		rf.applyCond.L.Lock()
+		DPrintf("server %v get applyCond Lock and startSendApplyMsg", rf.me)
+		for rf.last_applied >= rf.committed_index {
+			rf.applyCond.Wait()
+		}
+		rf.applyCond.L.Unlock()	
+		rf.mu.Lock()
+		// 每次只对leader的committed_index加一
+		DPrintf("server %v try to getEntry %v, last_log_index: %v", rf.me, rf.last_applied + 1, rf.log.lastLogIndex())
+		entry := rf.log.getEntry(rf.last_applied + 1)
+		DPrintf("server %v try to apply logindex: %v", rf.me, rf.last_applied + 1)
+		apply_msg := ApplyMsg{}
+		apply_msg.CommandValid = true
+		apply_msg.Command = entry.Command 
+		apply_msg.CommandIndex = entry.LogIndex
+		rf.mu.Unlock()
+
+		// 为了保证日志有序，通过applyCh阻塞发送ApplyMsg
+		DPrintf("server %v start to send applymsg, logindex: %v", rf.me, entry.LogIndex)
+		rf.applyCh <- apply_msg
+		// last_applied只有在当前协程中使用
+		rf.last_applied++
+		DPrintf("leader %v send applymsg successed", rf.me)
+	}
+}
+
+
 func (rf *Raft) startHeartBeat() {
 	DPrintf("server %v start heartbeat", rf.me)
-	var wg sync.WaitGroup
-	reply_res := make([]*RequestAppendEntriesReply, 0, 10)	
 	rf.mu.Lock()
-	request := &RequestAppendEntriesArgs{}
-	request.Term = rf.term
 	if rf.state == Leader {
 		for idx, _ := range rf.peers {
 			if idx == rf.me {
 				continue
 			}
-			wg.Add(1)
+		
+			request := &RequestAppendEntriesArgs{}
+			request.Term = rf.term
+			// 附带Leader的committed_index信息
+			if rf.match_index[idx] >= rf.committed_index {
+				request.LeaderCommit = rf.committed_index
+			} else {
+				request.LeaderCommit = 0
+			}
 			// 构造请求
 			reply := &RequestAppendEntriesReply{}
-			reply_res = append(reply_res, reply)
 			go func(server int) {
-				defer wg.Done()
 				rf.sendHeartBeatMsg(server, request, reply)
+				rf.mu.Lock()	
+				if reply.Term > rf.term {
+					rf.switchToFollower(reply.Term)
+				}
+				rf.mu.Unlock()
 			}(idx)
-		}
-	}
-	rf.mu.Unlock()
-	wg.Wait()
-	rf.mu.Lock()
-	for _, r := range reply_res {
-		if r.Term > rf.term {
-			rf.switchToFollower(r.Term)
 		}
 	}
 	rf.mu.Unlock()
@@ -380,6 +639,7 @@ func (rf *Raft) startLeaderElection() {
 
 	rf.term++
 	rf.vote_for = rf.me
+	DPrintf("server %v term %v votefor itself", rf.me, rf.term)
 	rf.state = Candiate
 	// b)开始选举后重置last_hb_time
 	rf.last_hb_time = time.Now().UnixNano()
@@ -387,9 +647,8 @@ func (rf *Raft) startLeaderElection() {
 	request := &RequestVoteArgs{}
 	request.CandidateId = rf.me
 	request.Term = rf.term
-	// Todo
-	// request.LastLogTerm
-	// request.LastLogIndex
+	request.LastLogTerm = rf.log.lastLogTerm()
+	request.LastLogIndex = rf.log.lastLogIndex()
 	for idx := 0; idx < len(rf.peers); idx++ {
 		if idx == rf.me {
 			continue
@@ -406,7 +665,7 @@ func (rf *Raft) startLeaderElection() {
 			rf.mu.Lock()
 			reply_num++		
 			if ok {
-				DPrintf("server %v's sendRequestVote back form %v, r.Term: %v, r.VoteGranted: %v, rf.term: %v", rf.me, server, reply.Term, reply.VoteGranted, rf.term)
+				DPrintf("server %v's sendRequestVote's reply form %v, r.Term: %v, r.VoteGranted: %v, rf.term: %v", rf.me, server, reply.Term, reply.VoteGranted, rf.term)
 				// 请求过期了
 				if reply.Term < rf.term {
 					return
@@ -422,8 +681,14 @@ func (rf *Raft) startLeaderElection() {
 					// 判断当前状态是否还是Candiate
 					if rf.state == Candiate && vote_num > len(rf.peers) / 2 {
 						rf.state = Leader
-						DPrintf("server %v become leader", rf.me)
-						// 一旦选举成功，发送empty AppendEntriesRPC
+						DPrintf("server %v become leader, next_index for all server: %v", rf.me, rf.log.lastLogIndex() + 1)
+						// 成为leader后重置next_index和match_index
+						for idx, _ := range rf.peers {
+							rf.next_index[idx] = rf.log.lastLogIndex() + 1
+							// 置为-1还是0，有不同的说法
+							rf.match_index[idx] = 0
+						}
+						// 一旦append entriesAppendEntriesRPC
 						go rf.heartBeatClock()
 					}
 				}
@@ -465,9 +730,9 @@ func (rf *Raft) leaderElectionClock() {
 		last_time := rf.last_hb_time
 		cur_time := time.Now().UnixNano()
 		// 超时，开始选举，重置计时
-		if cur_time - last_time >= int64(rf.election_timeout * TONANOSECOND) {
-			DPrintf("server %v election timeout, cur_time: %v, last_time: %v, interval: %v, election_timeout: %v", 
-				rf.me, cur_time, last_time, cur_time - last_time, rf.election_timeout)
+		if cur_time - last_time >= int64(rf.election_timeout) * TONANOSECOND {
+			DPrintf("server %v election timeout, cur_time: %v, last_time: %v, interval: %v, election_timeout: %v, Leader ? %v, timeout: %v", 
+				rf.me, cur_time, last_time, cur_time - last_time, rf.election_timeout, rf.state == Leader, cur_time - last_time >= int64(rf.election_timeout) * TONANOSECOND)
 			go rf.startLeaderElection()
 		}
 		rf.mu.Unlock()
@@ -496,13 +761,23 @@ func Make(peers []*labrpc.ClientEnd, me int,
 
 	// Your initialization code here (2A, 2B, 2C).
 	// 后台起一个go routine 周期的通过发送RequestVote RPC开始选举
+	rf.applyCh = applyCh
 	election_interval := MAX_ELECTION_TIMEOUT - MIN_ELECTION_TIMEOUT + 1
 	rf.election_timeout = MIN_ELECTION_TIMEOUT + rand.Int() % election_interval
 	rf.last_hb_time = time.Now().UnixNano()
 	rf.vote_for = -1
 	rf.state = Follower
+	// 初始化LogStorage
+	rf.log = &LogStorage{}
+	rf.log.initLogStorage()
+	
+	rf.next_index = make([]int, len(rf.peers))
+	rf.match_index = make([]int, len(rf.peers))
+	rf.committed_index = 0
+	rf.last_applied = 0
+	rf.applyCond = sync.NewCond(&sync.Mutex{})
 	go rf.leaderElectionClock()
-
+	go rf.startSendApplyMsg() 
 
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())

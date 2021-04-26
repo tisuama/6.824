@@ -167,8 +167,10 @@ func (cfg *config) start1(i int) {
 	// listen to messages from Raft indicating newly committed messages.
 	applyCh := make(chan ApplyMsg)
 	go func() {
+		log.Printf("Server %v Start to listen applymsg channel", i)
 		for m := range applyCh {
 			err_msg := ""
+			log.Printf("=== client %v receive applymsg from applych, info: %v %v %v", i, m.CommandValid, m.Command, m.CommandIndex)
 			if m.CommandValid == false {
 				// ignore other types of ApplyMsg
 			} else {
