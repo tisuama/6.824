@@ -8,6 +8,10 @@ type LogStorage struct {
 	log               []*LogEntry
 }
 
+func (s* LogStorage) getLog() []*LogEntry {
+	return s.log
+}
+
 func (s* LogStorage) initLogStorage() {
 	// Todo 持久化时的初始化方法
 	s.first_log_index = 1
