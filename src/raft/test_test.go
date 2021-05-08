@@ -10,6 +10,7 @@ package raft
 
 import (
 	"fmt"
+	"log"
 	"math/rand"
 	"sync"
 	"sync/atomic"
@@ -816,12 +817,15 @@ func TestFigure8Unreliable2C(t *testing.T) {
 		}
 	}
 
+	log.Printf("=== Start connnect All servers ===")
+
 	for i := 0; i < servers; i++ {
 		if cfg.connected[i] == false {
 			cfg.connect(i)
 		}
 	}
 
+	log.Printf("=== All servers connected ===")
 	cfg.one(rand.Int()%10000, servers, true)
 
 	cfg.end()

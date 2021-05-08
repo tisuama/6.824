@@ -1,5 +1,4 @@
 package raft
-// import "log"
 
 type LogStorage struct {
 	// first_log_index 1 last_log_index 0
@@ -65,14 +64,22 @@ func (s* LogStorage) truncateSuffix(index int) int {
 	return 0
 }
 
-func (s* LogStorage) getEntry(index int) *LogEntry {
+// 支持一次读取多条日志
+func (s* LogStorage) getEntry(index, count int) []*LogEntry {
+	var entry []*LogEntry
 	if s.last_log_index + 1 == s.first_log_index {
-		return nil
+		return entry
 	}
 	if index > s.last_log_index || index < s.first_log_index {
-		return nil
+		return entry
 	}
-	return s.log[index - s.first_log_index]
+	start_index := index - s.first_log_index
+	end_index := start_index + count
+	if end_index > s.last_log_index {
+		end_index = s.last_log_index
+	}
+	entry = s.log[start_index : end_index]
+	return entry
 }
 
 func (s* LogStorage) getLogTerm(index int) int {
