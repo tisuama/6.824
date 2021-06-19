@@ -1,4 +1,4 @@
-package kvraft
+ package kvraft
 
 import (
 	"../labgob"
@@ -8,6 +8,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"bytes"
 )
 
 const Debug = 1
@@ -31,8 +32,8 @@ type Op struct {
 }
 
 type TableEntry struct {
-	seq 	int64
-	value	string
+	Seq 	int64
+	Value	string
 }
 
 type KVServer struct {
@@ -48,40 +49,49 @@ type KVServer struct {
 	// Store KV Pair, Need persist
 	store 	   map[string]string 
 	table 	   map[int64]*TableEntry
+	lastincludeindex int
+
 	indexchan  map[int] chan raft.ApplyMsg
 }
 
-func (kv *KVServer) LookUpDupTable(clientid, seq int64) (bool, string) {
+func (kv *KVServer) lookUpDupTable(clientid, seq int64) (bool, string) {
 	entry, ok := kv.table[clientid]
 	if ok {
-		s := entry.seq
+		s := entry.Seq
 		if seq <= s {
-			return true, entry.value
+			return true, entry.Value
 		}
 	}
 	return false, ""
 }
 
-func (kv *KVServer) UpdateDupTable(clientid, seq int64, value string) {
+func (kv *KVServer) updateDupTable(clientid, seq int64, value string) {
 	entry, exist := kv.table[clientid]
-	if exist && entry.seq >= seq {
-		// DPrintf("KVServer %v UpdateDupTable failed clientid: %v, entry.seq: %v, seq: %v", kv.me, clientid, entry.seq, seq)
+	if exist && entry.Seq >= seq {
+		// DPrintf("KVServer %v updateDupTable failed clientid: %v, entry.seq: %v, seq: %v", kv.me, clientid, entry.seq, seq)
 		return
 	}
 	// update dup table
 	entry = &TableEntry{}
-	entry.seq = seq
-	entry.value = value
+	entry.Seq = seq
+	entry.Value = value
 	kv.table[clientid] = entry
-	// DPrintf("KVServer %v UpdateDupTable sucess clientid: %v, seq: %v, value: %v", kv.me, clientid, seq, value)
+	// DPrintf("KVServer %v updateDupTable sucess clientid: %v, seq: %v, value: %v", kv.me, clientid, seq, value)
 }
 
-func (kv *KVServer) GetValue(key string) (string, bool) {
+func (kv *KVServer) printvalue() {
+	for k := range kv.store {
+		DPrintf("KVServer %v Store value, k: %v, value: %v", kv.me, k, kv.store[k])
+	}	
+}
+
+func (kv *KVServer) getValue(key string) (string, bool) {
 	value, exist := kv.store[key]
+	kv.printvalue()
 	return value, exist
 }
 
-func (kv *KVServer) PutValue(key, value, op string) {
+func (kv *KVServer) putValue(key, value, op string) {
 	if (op == "Put") {
 		kv.store[key] = value
 	} else {
@@ -89,10 +99,11 @@ func (kv *KVServer) PutValue(key, value, op string) {
 		str = str + value
 		kv.store[key] = str
 	}
+	kv.printvalue()
 }
 
 // must get lock first
-func (kv *KVServer) notifyrpchandle(m raft.ApplyMsg) {
+func (kv *KVServer) notifyRPCHandle(m raft.ApplyMsg) {
  	applychan, exist := kv.indexchan[m.CommandIndex]
 	if exist {
 		// 注意只有leader才有indexchan
@@ -107,34 +118,50 @@ func (kv *KVServer) HandleApplyMsg() {
 	for  m := range kv.applyCh {
 		DPrintf("KVServer %v new ApplyMsg, index: %v", kv.me, m.CommandIndex)
 		if m.CommandValid == false {
-			// ignore now
+			DPrintf("KVserver %v start to restoreFromSnapShot", kv.me)
+			kv.restoreFromSnapShot(m.SnapShot)
 		} else {
 			cmd := m.Command.(Op)
 			DPrintf("KVServer %v get ApplyMsg, cmd info: %v, index: %v", kv.me, cmd, m.CommandIndex)
 			kv.mu.Lock()
-			ok, _ := kv.LookUpDupTable(cmd.ClientId, cmd.Seq)
+			
+			// step2: appy the state
+			ok, _ := kv.lookUpDupTable(cmd.ClientId, cmd.Seq)
 			if ok {
 				// case：在Apply之前dup request已经来了
 				DPrintf("KVServer %v donothing because of dup request", kv.me)
-				kv.notifyrpchandle(m)
+				kv.notifyRPCHandle(m)
 				kv.mu.Unlock()
 				continue
 			}
 			DPrintf("KVServer %v do unique ApplyMsg, cmd info: %v, index: %v", kv.me, cmd, m.CommandIndex)
 			if cmd.OpType != "Get" {
-				kv.PutValue(cmd.Key, cmd.Value, cmd.OpType)
+				kv.putValue(cmd.Key, cmd.Value, cmd.OpType)
 			}
-			value, _ := kv.GetValue(cmd.Key)
-			kv.UpdateDupTable(cmd.ClientId, cmd.Seq, value)
-			kv.notifyrpchandle(m)
+			value, _ := kv.getValue(cmd.Key)
+			DPrintf("KVServer %v update cmd %v's value to %v", kv.me, cmd, value)
+			kv.updateDupTable(cmd.ClientId, cmd.Seq, value)
+			kv.notifyRPCHandle(m)
+			
+			// step2: block and make snapshot
+			if kv.maxraftstate != -1 && 
+			   kv.maxraftstate <= kv.rf.GetPersistSize() {
+				lastincludeindex := m.CommandIndex
+				DPrintf("KVServer %v start to makeSnapShot, lastincludeindex is %v, len(kv.store): %v, len(kv.table): %v", 
+					kv.me, lastincludeindex, len(kv.store), len(kv.table))
+				kvdata := kv.makeSnapShot(lastincludeindex)
+				DPrintf("KVServer %v makeSnapShot SUCCESS, lastincludeindex is %v", kv.me,  lastincludeindex)
+				kv.rf.PersistWithSnapShot(kvdata, lastincludeindex)
+			}
 			kv.mu.Unlock()
+			DPrintf("KVServer %v release to lock", kv.me)
 		}
 	}
 }
 
 func (kv *KVServer) execute(cmd Op, reply *Reply) {
-
 	kv.mu.Lock()
+	DPrintf("KVServer %v call Start to excute cmd: %v", kv.me, cmd)
 	index, _, is_leader := kv.rf.Start(cmd)			
 	DPrintf("KVServer %v start to execute cmd: %v, index: %v, is_leader: %v", kv.me, cmd, index, is_leader)
 	if !is_leader {
@@ -157,21 +184,25 @@ func (kv *KVServer) execute(cmd Op, reply *Reply) {
 	DPrintf("KVServer %v block wait for reply of cmd: %v, index: %v", kv.me, cmd, index)
 	select {
 	case m := <-applyindex:
-		if m.CommandIndex != index {
+		cmd_a := m.Command.(Op)
+		if m.CommandIndex != index || 
+		   cmd.ClientId != cmd_a.ClientId || 
+		   cmd.Seq != cmd_a.Seq {
 			DPrintf("KVServer %v Err because CommandIndex: %v != index: %v", kv.me, m.CommandIndex, index)
 			reply.Err = ErrWrongLeader
 			break
 		}
 		if cmd.OpType == "Get" {
 			kv.mu.Lock()
-			defer kv.mu.Unlock()
-			value, exist := kv.GetValue(cmd.Key)
+			value, exist := kv.getValue(cmd.Key)
 			if !exist {
 				reply.Err = ErrNoKey
+				kv.mu.Unlock()
 				break 
 			} else {
 				reply.Err = OK
 				reply.Value = value
+				kv.mu.Unlock()
 				break
 			}
 		} else {
@@ -182,17 +213,18 @@ func (kv *KVServer) execute(cmd Op, reply *Reply) {
 		reply.Err = ErrWrongLeader
 		break
 	}
-	DPrintf("KVServer %v get reply of cmd: %v, info: %v", kv.me, cmd, reply.Err)
+	value , _ := kv.getValue(cmd.Key)
+	DPrintf("KVServer %v get reply of cmd: %v, info: %v, value: %v", kv.me, cmd, reply.Err, value)
 }
 
 // Assert seq num inc
 func (kv *KVServer) Get(args *GetArgs, reply *Reply) {
 	// Your code here.
-	DPrintf("KVServer %v do Get reques and try to get key, args: %v", kv.me, args)
+	DPrintf("KVServer %v do Get request and try to get key, args: %v", kv.me, args)
 	kv.mu.Lock()
 	DPrintf("KVServer %v start to Get %v", kv.me, args)
 	// find in dup table
-	ok, value := kv.LookUpDupTable(args.ClientId, args.Seq)
+	ok, value := kv.lookUpDupTable(args.ClientId, args.Seq)
 	if ok {
 		reply.Err = OK
 		reply.Value = value
@@ -211,13 +243,12 @@ func (kv *KVServer) Get(args *GetArgs, reply *Reply) {
 }
 
 
-
 func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *Reply) {
 	// Your code here.
 	DPrintf("KVServer %v do Put reques and try to get key, args: %v", kv.me, args)
 	kv.mu.Lock()
 	DPrintf("KVServer %v start to PutAppend %v", kv.me, args)
-	ok, _ := kv.LookUpDupTable(args.ClientId, args.Seq)
+	ok, _ := kv.lookUpDupTable(args.ClientId, args.Seq)
 	if ok {
 		DPrintf("KVServer %v PutAppend return because dup request, args: %v", kv.me, args)
 		reply.Err = OK
@@ -255,6 +286,45 @@ func (kv *KVServer) killed() bool {
 	return z == 1
 }
 
+// make sure hold lock when call this func
+func (kv *KVServer) makeSnapShot(lastincludeindex int) []byte {
+	w := new(bytes.Buffer)
+	e := labgob.NewEncoder(w)
+	e.Encode(lastincludeindex)
+	e.Encode(kv.store)
+	e.Encode(kv.table)
+	data := w.Bytes()
+	return data	
+}
+
+func (kv *KVServer) restoreFromSnapShot(data []byte) {
+	if (len(data) < 1) {
+		DPrintf("KVServer %v restoreFromSnapShot failed becaues data is empty", kv.me)
+		return
+	}
+	var lastincludeindex int
+	var store map[string]string
+	var table map[int64]*TableEntry
+	r := bytes.NewBuffer(data)
+	d := labgob.NewDecoder(r)
+	if d.Decode(&lastincludeindex) != nil ||
+	   d.Decode(&store) != nil ||
+	   d.Decode(&table) != nil {
+		DPrintf("KVServer %v Decode error, return now", kv.me)
+		return 
+	}
+	kv.mu.Lock()
+	kv.lastincludeindex = lastincludeindex
+	kv.store = store
+	kv.printvalue()
+	kv.table = table
+	DPrintf("============")
+	kv.printvalue()
+	kv.mu.Unlock()
+	DPrintf("KVServer %v restoreFromSnapShot SUCESS, len(store): %v, len(kv.store): %v, len(table): %v, len(kv.table): %v", 
+		kv.me, len(store), len(kv.store), len(table), len(kv.table))
+}
+
 
 //
 // servers[] contains the ports of the set of
@@ -273,6 +343,7 @@ func (kv *KVServer) killed() bool {
 func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister, maxraftstate int) *KVServer {
 	// call labgob.Register on structures you want
 	// Go's RPC library to marshall/unmarshall.
+	DPrintf("Make new KVServer node %v", me)
 	labgob.Register(Op{})
 
 	kv := new(KVServer)
@@ -282,6 +353,8 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 	// You may need initialization code here.
 
 	kv.applyCh = make(chan raft.ApplyMsg)
+	go kv.HandleApplyMsg()
+
 	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
 
 	// You may need initialization code here.
@@ -289,6 +362,5 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 	kv.table = make(map[int64]*TableEntry)
 	kv.indexchan = make(map[int]chan raft.ApplyMsg)
 	
-	go kv.HandleApplyMsg()
 	return kv
 }

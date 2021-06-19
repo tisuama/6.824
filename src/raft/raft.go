@@ -21,8 +21,8 @@ import "sync/atomic"
 import "../labrpc"
 import "time"
 import "math/rand"
-import "net/http"
-import _ "net/http/pprof"
+// import "net/http"
+// import _ "net/http/pprof"
 import "bytes"
 import "../labgob"
 
@@ -30,7 +30,7 @@ const MIN_ELECTION_TIMEOUT = 200
 const MAX_ELECTION_TIMEOUT = 300
 const HB_INTERVAL = 100
 const TONANOSECOND = 1000 * 1000
-const BACKUP_NUMBER = 50
+const BACKUP_NUMBER = 100
 
 type State int
 
@@ -64,6 +64,8 @@ type ApplyMsg struct {
 	CommandValid bool
 	Command      interface{}
 	CommandIndex int
+	// added fileds for snapshot
+	SnapShot	 []byte
 }
 
 type LogEntry struct {
@@ -120,6 +122,21 @@ func (rf *Raft) GetState() (int, bool) {
 	return rf.term, rf.state == Leader
 }
 
+func  (rf *Raft) encodestate() []byte {
+	w := new(bytes.Buffer)
+	e := labgob.NewEncoder(w)
+	e.Encode(rf.term)
+	e.Encode(rf.vote_for)
+	e.Encode(rf.log.getLog())
+	e.Encode(rf.log.firstLogIndex())
+	data := w.Bytes()
+	return data
+}
+
+func (rf *Raft) GetPersistSize() int {
+	return rf.persister.RaftStateSize()
+}
+
 //
 // save Raft's persistent state to stable storage,
 // where it can later be retrieved after a crash and restart.
@@ -135,25 +152,18 @@ func (rf *Raft) persist() {
 	// data := w.Bytes()
 	// rf.persister.SaveRaftState(data)
 	// TODO: 持久化first_log_index
-	w := new(bytes.Buffer)
-	e := labgob.NewEncoder(w)
-	e.Encode(rf.term)
-	e.Encode(rf.vote_for)
-	e.Encode(rf.log.getLog())
-	e.Encode(rf.log.firstLogIndex())
-	data := w.Bytes()
-	rf.persister.SaveRaftState(data)
+	raftstate := rf.encodestate()
+	rf.persister.SaveRaftState(raftstate)
 	DPrintf("server %v persist complete, term: %v vote_for: %v, lastLogindex: %v", rf.me, rf.term, rf.vote_for, rf.log.lastLogIndex())
 }
-
 
 //
 // restore previously persisted state.
 //
-func (rf *Raft) readPersist(data []byte) {
-	if data == nil || len(data) < 1 { // bootstrap without any state?
+func (rf *Raft) readPersist(raftstate []byte, snapshot []byte) int{
+	if raftstate == nil || len(raftstate) < 1 { // bootstrap without any state?
 		DPrintf("[warn]: Server %v readPersist Nothing because data is empty", rf.me)
-		return
+		return 0
 	}
 	// Your code here (2C).
 	// Example:
@@ -171,25 +181,68 @@ func (rf *Raft) readPersist(data []byte) {
 	var Term int
 	var VoteFor int
 	var PreLog []*LogEntry
-	r := bytes.NewBuffer(data)
+	var index int
+	// 解析出raftstate
+	r := bytes.NewBuffer(raftstate)
 	d := labgob.NewDecoder(r)
+
+	// 解析出lastincludeindex
+	sr := bytes.NewBuffer(snapshot)
+	sd := labgob.NewDecoder(sr)
+
+	lastincludeindex := 1
+	if len(snapshot) != 0 && 
+	   sd.Decode(&lastincludeindex) != nil {
+		DPrintf("Server %v Decode snapshot info err", rf.me)   
+		return 0
+	}
+
 	if d.Decode(&Term) != nil ||
 	   d.Decode(&VoteFor) != nil ||
-	   d.Decode(&PreLog) != nil {
-		return 	   
+	   d.Decode(&PreLog) != nil ||
+	   d.Decode(&index) != nil {
+		DPrintf("Server %v Decode raftstate info err", rf.me)   
+		return 0
    } else {
-	    DPrintf("read persisted state, term: %v, vote_for: %v", Term, VoteFor)
+	    DPrintf("Server %v read persisted state, term: %v, vote_for: %v, lastincludeindex: %v", rf.me, Term, VoteFor, lastincludeindex)
 		for idx, logentry := range PreLog {
-			DPrintf("read persisted state, %v-th log info, index: %v, command: %v", idx, logentry.LogIndex, logentry.Command)
+			DPrintf("Server %v read persisted state, %v-th log info, index: %v, command: %v", rf.me, idx, logentry.LogIndex, logentry.Command)
 		}
 	   	rf.term = Term
 	   	rf.vote_for = VoteFor
+		// step1：必须先清空log
+		rf.log.resetLog(index)
+		DPrintf("Server %v firstLogIndex: %v, lastLogIndex: %v After resetLog", rf.me, rf.log.firstLogIndex(), rf.log.lastLogIndex())
 	   	rf.log.appendEntries(PreLog)
-   }
+		DPrintf("Server %v firstLogIndex: %v, lastLogIndex: %v After AppendEntries", rf.me, rf.log.firstLogIndex(), rf.log.lastLogIndex())
+		// step2：通过rf.applyCh发送apply_msg
+		rf.SendSnapShotData(snapshot, lastincludeindex)
+		return lastincludeindex
+	}
 }
 
+func (rf *Raft) SendSnapShotData(snapshot []byte, lastincludeindex int) {
+	apply_msg := ApplyMsg{}
+	apply_msg.CommandValid = false
+	apply_msg.SnapShot = snapshot
+	DPrintf("Server %v start to SendSnapShotData by rf.applyCh", rf.me)
+	rf.applyCh <- apply_msg
+	// 更新了last_committed
+	rf.last_committed = lastincludeindex
+	DPrintf("Server %v sendSnapShotData KVServer complete, last_committed is update to %v", rf.me, lastincludeindex)
+}
 
-
+func (rf *Raft) PersistWithSnapShot(kvstate []byte, lastincludeindex int) {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	// 坑点：由于PreLogIndex和PreLogTerm的原因，不能用lastincludeindex截断
+	DPrintf("Server %v start to truncatePrefix to %v, firstLogIndex: %v, lastLogIndex %v\n", rf.me, lastincludeindex, rf.log.firstLogIndex(), rf.log.lastLogIndex())
+	rf.log.truncatePrefix(lastincludeindex)
+	DPrintf("Server %v truncatePrefix complete to %v, firstLogIndex: %v, lastLogIndex %v\n", rf.me, lastincludeindex, rf.log.firstLogIndex(), rf.log.lastLogIndex())
+	raftstate := rf.encodestate()
+	rf.persister.SaveStateAndSnapshot(raftstate, kvstate)
+	DPrintf("Server %v PersisWithSnapShot Complete", rf.me)
+}
 
 //
 // example RequestVote RPC arguments structure.
@@ -216,6 +269,7 @@ type RequestVoteReply struct {
 
 type RequestAppendEntriesArgs struct {
 	Term         int
+	// 可以优化的点
 	LeaderId	 int
 	PrevLogIndex int
 	PrevLogTerm  int
@@ -229,6 +283,18 @@ type RequestAppendEntriesReply struct {
 	ConflictTerm  int
 	ConflictIndex int
 	Status		  AppendEntryStatus
+}
+
+type RequestInstallSnapShotArgs struct {
+	Term 		int
+	RaftState   []byte
+	SnapShot 	[]byte
+}
+
+type RequestInstallSnapShotReply struct {
+	Term	   		 int
+	LastIncludeIndex int
+	Sucess     		 bool
 }
 
 // 调用此函数前必须带锁
@@ -383,6 +449,27 @@ func (rf *Raft) AppendEntries(args  *RequestAppendEntriesArgs,
 	// 返回
 	return 	
 }
+
+func (rf *Raft) InstallSnapShot(args  *RequestInstallSnapShotArgs,
+							    reply *RequestInstallSnapShotReply) {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	DPrintf("Server %v start to InstallSnapShot", rf.me)
+	reply.Sucess = true
+	reply.Term = rf.term
+	if args.Term > rf.term {
+		rf.switchToFollower(args.Term)
+		return 
+	}
+	last_include_index := rf.readPersist(args.RaftState, args.SnapShot)
+	reply.LastIncludeIndex = last_include_index
+	// 坑点： 要安装下
+	rf.persister.SaveStateAndSnapshot(args.RaftState, args.SnapShot)
+	DPrintf("Server %v InstallSnapShot complete", rf.me)
+	return 
+}
+
+
 //
 // example code to send a RequestVote RPC to a server.
 // server is the index of the target server in rf.peers[].
@@ -427,6 +514,15 @@ func (rf *Raft) sendAppendEntriesRPC(server int,
 	ok := rf.peers[server].Call("Raft.AppendEntries", args, reply)
 	return ok
 }
+
+
+func (rf *Raft) sendInstallSnapShotRPC(server int, 
+								   args   *RequestInstallSnapShotArgs, 
+								   reply  *RequestInstallSnapShotReply) bool {
+	DPrintf("leader %v sendInstallSnapShotRPC to server %v", rf.me, server)
+	ok := rf.peers[server].Call("Raft.InstallSnapShot", args, reply)
+	return ok
+}
 //
 // the service using Raft (e.g. a k/v server) wants to start
 // agreement on the next command to be appended to Raft's log. if this
@@ -442,33 +538,65 @@ func (rf *Raft) sendAppendEntriesRPC(server int,
 // the leader.
 //
 func (rf *Raft) buildAppendEntriesArgs(server int, is_heartbeat bool) (*RequestAppendEntriesArgs, 
-									 							  *RequestAppendEntriesReply) {
+	*RequestAppendEntriesReply, bool) {
 	request := &RequestAppendEntriesArgs{}
 	request.Term = rf.term
 	request.LeaderId = rf.me
 	request.LeaderCommit = rf.committed_index
+	reply := &RequestAppendEntriesReply{}
 	// buildArgs
 	if !is_heartbeat {
 		index := rf.next_index[server]
-		DPrintf("leader %v's next_index for server %v is %v, lastLogIndex: %v", rf.me, server, rf.next_index[server], rf.log.lastLogIndex())
-		// 从leader的log中获取
-		entries := rf.log.getEntry(index, BACKUP_NUMBER)
-		if len(entries) != 0 {
-			DPrintf("leader %v get LogIndex %v's entry info for server %v, first entry index: %v, end entry index: %v, entry number: %v", 
-				rf.me, index, server, entries[0].LogIndex, entries[len(entries) - 1].LogIndex,len(entries))
+		DPrintf("leader %v's next_index for server %v is %v, firstLogIndex: %v, lastLogIndex: %v", 
+			rf.me, server, rf.next_index[server], rf.log.firstLogIndex(), rf.log.lastLogIndex())
+		// case 1: log已经被截断时
+		if index != 1 && index <= rf.log.firstLogIndex() {
+			DPrintf("leader %v buildAppendEntriesArgs for server %v need_snapshot, because index: %v, but firstLogIndex is %v", rf.me, server, index, rf.log.firstLogIndex())
+			return request, reply, true		
+		} else {
+			// case 2: 走正常流程
+			// 从leader的log中获取
+			entries := rf.log.getEntry(index, BACKUP_NUMBER)
+			request.Entries = entries
+			request.PrevLogTerm = rf.log.getLogTerm(index - 1) 
+			request.PrevLogIndex = rf.log.getLogIndex(index - 1)
 		}
-		request.Entries = entries
-		request.PrevLogTerm = rf.log.getLogTerm(index - 1) 
-		request.PrevLogIndex = rf.log.getLogIndex(index - 1)
 	} else {
 		request.PrevLogTerm = rf.log.lastLogTerm()	
 		request.PrevLogIndex = rf.log.lastLogIndex()
 	}
 	
-	reply := &RequestAppendEntriesReply{}
-	return request, reply
+	return request, reply, false
 }
 
+func (rf *Raft) doInstallSnapShotRPC(server int) {
+	rf.mu.Lock()
+	request := &RequestInstallSnapShotArgs{}
+	request.Term = rf.term
+	request.RaftState = rf.persister.ReadRaftState()
+	request.SnapShot = rf.persister.ReadSnapshot()
+	reply := &RequestInstallSnapShotReply{}
+	rf.mu.Unlock()
+	ok := rf.sendInstallSnapShotRPC(server, request, reply)	
+	if ok {
+		rf.mu.Lock()
+		defer rf.mu.Unlock()
+		if reply.Term > rf.term {
+			rf.switchToFollower(reply.Term)
+			return 
+		}
+		if request.Term != rf.term {
+			DPrintf("Server %v doInstallSnapShotRPC ERR, request.Term != rf.term", rf.me);
+			return
+		}
+		cur_log_index := reply.LastIncludeIndex
+		rf.next_index[server] = cur_log_index + 1
+		rf.match_index[server] = cur_log_index
+		DPrintf("Leader %v doInstallSnapShotRPC SUCESS, next_index[%v]: %v, match_index[%v]: %v", 
+			rf.me, server, rf.next_index[server], server, rf.match_index[server])
+		return 
+	}
+}
 
 func (rf *Raft) doAppendEntriesRPC(server, index int,  is_heartbeat bool) {
 	rf.mu.Lock()
@@ -482,10 +610,16 @@ func (rf *Raft) doAppendEntriesRPC(server, index int,  is_heartbeat bool) {
 		rf.mu.Unlock()
 		return;
 	}
-	request, reply := rf.buildAppendEntriesArgs(server, is_heartbeat)
+	request, reply, need_snapshot := rf.buildAppendEntriesArgs(server, is_heartbeat)
+	if need_snapshot {
+		DPrintf("Leader %v need send snapshot to server %v because next_index is %v but firstLogIndex is %v", rf.me, server, rf.next_index[server], rf.log.firstLogIndex())
+		rf.mu.Unlock()
+		go rf.doInstallSnapShotRPC(server)
+		return 
+	}
 	if len(request.Entries) != 0 {
-		DPrintf("Leader %v buildAppendEntriesArgs for server %v, START LogIndex: %v, entry count: %v, is_heartbeat: %v", 
-			rf.me, server, request.Entries[0].LogIndex, len(request.Entries), is_heartbeat)
+		DPrintf("Leader %v buildAppendEntriesArgs for server %v, START LogIndex: %v, entry count: %v, is_heartbeat: %v, request info: %v", 
+			rf.me, server, request.Entries[0].LogIndex, len(request.Entries), is_heartbeat, request)
 	} else {
 		DPrintf("Leader %v buildAppendEntriesArgs for server %v with NO ENTRIES, is_heartbeat: %v", rf.me, server, is_heartbeat)
 	}
@@ -670,9 +804,13 @@ func (rf *Raft) startSendApplyMsg() {
 		}
 		rf.applyCond.L.Unlock()	
 		rf.mu.Lock()
+		if rf.last_committed >= rf.committed_index {
+			rf.mu.Unlock()
+			continue;
+		}
 		// 每次只对leader的committed_index加一
-		DPrintf("server %v try to getEntry %v, last_log_index: %v, rf.committed_index: %v", 
-			rf.me, rf.last_committed + 1, rf.log.lastLogIndex(), rf.committed_index)
+		DPrintf("server %v try to getEntry %v, first_log_index: %v, last_log_index: %v, rf.committed_index: %v", 
+			rf.me, rf.last_committed + 1, rf.log.firstLogIndex(), rf.log.lastLogIndex(), rf.committed_index)
 		entry := rf.log.getEntry(rf.last_committed + 1, 1)
 		DPrintf("server %v try to apply logindex: %v", rf.me, rf.last_committed + 1)
 		apply_msg := ApplyMsg{}
@@ -838,7 +976,7 @@ func (rf *Raft) leaderElectionClock() {
 func Make(peers []*labrpc.ClientEnd, me int,
 	persister *Persister, applyCh chan ApplyMsg) *Raft {
 	
-	DPrintf("327Make new raft node %v", me)
+	DPrintf("Make new raft node %v", me)
 	rf := &Raft{}
 	rf.peers = peers
 	rf.persister = persister
@@ -854,7 +992,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.state = Follower
 	// 初始化LogStorage
 	rf.log = &LogStorage{}
-	rf.log.initLogStorage()
+	rf.log.initLogStorage(1)
 	
 	rf.next_index = make([]int, len(rf.peers))
 	rf.match_index = make([]int, len(rf.peers))
@@ -862,15 +1000,16 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.last_committed = 0
 	rf.applyCond = sync.NewCond(&sync.Mutex{})
 	go rf.leaderElectionClock()
-	go rf.startSendApplyMsg() 
 
 	// initialize from state persisted before a crash
-	rf.readPersist(persister.ReadRaftState())
-    
+	rf.readPersist(persister.ReadRaftState(), persister.ReadSnapshot())
+
+	go rf.startSendApplyMsg() 
+
 	// 监控代码
-	go func() {
-		http.ListenAndServe("localhost:9876", nil)
-	}()
+	// go func() {
+	// 	http.ListenAndServe("localhost:9876", nil)
+	// }()
 
 	return rf
 }

@@ -54,7 +54,7 @@ func (ck *Clerk) Get(key string) string {
 	// block until reply back
 	for true {
 		reply := Reply{}
-		log.Printf("client %v new Get request to KVServer %v, request: %v", ck.id, ck.leader, request)
+		log.Printf("client %v new Get request to index %v, request: %v", ck.id, ck.leader, request)
 		ok := ck.servers[ck.leader].Call("KVServer.Get", &request, &reply)
 		if ok {
 			if reply.Err == OK {
@@ -94,7 +94,7 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 
 	for true {
 		reply := Reply{}
-		log.Printf("client %v new Put request to KVServer %v, request: %v", ck.id, ck.leader, request)
+		log.Printf("client %v new Put request to index %v, request: %v", ck.id, ck.leader, request)
 		ok := ck.servers[ck.leader].Call("KVServer.PutAppend", &request, &reply)
 		if ok {
 			switch reply.Err {
