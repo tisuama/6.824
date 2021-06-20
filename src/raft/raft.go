@@ -231,8 +231,8 @@ func (rf *Raft) PersistWithSnapShot(kvstate []byte, lastincludeindex int) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 	if lastincludeindex <= rf.last_include_index {
-		DPrintf("Server %v PersistWithSnapShot becaues lastincludeindex: %v, but rf.last_include_index: %v", 
-			lastincludeindex, rf.last_include_index)
+		DPrintf("Server %v PersistWithSnapShot failed becaues lastincludeindex: %v, but rf.last_include_index: %v", 
+			rf.me, lastincludeindex, rf.last_include_index)
 		return 
 	}
 	// 坑点：由于PreLogIndex和PreLogTerm的原因，不能用lastincludeindex截断
@@ -816,6 +816,7 @@ func (rf *Raft) startSendApplyMsg() {
 			DPrintf("server %v try to send Snapdata by applyCh, rf.last_committed: %v, rf.last_include_index: %v", 
 				rf.me, rf.last_committed, rf.last_include_index)
 			apply_msg.CommandValid = false
+			apply_msg.CommandIndex = rf.last_include_index
 			apply_msg.SnapShot = rf.persister.ReadSnapshot()	
 		} else {
 			DPrintf("server %v try to getEntry %v, first_log_index: %v, last_log_index: %v, rf.committed_index: %v", 
@@ -829,9 +830,13 @@ func (rf *Raft) startSendApplyMsg() {
 		rf.mu.Unlock()
 
 		rf.applyCh <- apply_msg
+		rf.mu.Lock()
 		// last_committed只有在当前协程中使用
-		rf.last_committed++
+		if apply_msg.CommandIndex >= rf.last_include_index {
+			rf.last_committed++
+		}
 		DPrintf("server %v send applymsg successed", rf.me)
+		rf.mu.Unlock()
 	}
 }
 
