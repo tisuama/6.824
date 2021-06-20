@@ -109,7 +109,7 @@ type Raft struct {
 	// Applych
 	applyCh 		  chan ApplyMsg
 	applyCond		  *sync.Cond	
-
+	last_include_index int
 }
 
 // return currentTerm and whether this server
@@ -215,32 +215,33 @@ func (rf *Raft) readPersist(raftstate []byte, snapshot []byte) int{
 		DPrintf("Server %v firstLogIndex: %v, lastLogIndex: %v After resetLog", rf.me, rf.log.firstLogIndex(), rf.log.lastLogIndex())
 	   	rf.log.appendEntries(PreLog)
 		DPrintf("Server %v firstLogIndex: %v, lastLogIndex: %v After AppendEntries", rf.me, rf.log.firstLogIndex(), rf.log.lastLogIndex())
-		// step2：通过rf.applyCh发送apply_msg
-		rf.SendSnapShotData(snapshot, lastincludeindex)
+		// step2：更新apply信息
+		rf.last_include_index = lastincludeindex
+		if rf.last_committed < lastincludeindex {
+			rf.last_committed = lastincludeindex - 1
+		}
+		if rf.committed_index < lastincludeindex {
+			rf.committed_index = lastincludeindex
+		}
 		return lastincludeindex
 	}
-}
-
-func (rf *Raft) SendSnapShotData(snapshot []byte, lastincludeindex int) {
-	apply_msg := ApplyMsg{}
-	apply_msg.CommandValid = false
-	apply_msg.SnapShot = snapshot
-	DPrintf("Server %v start to SendSnapShotData by rf.applyCh", rf.me)
-	rf.applyCh <- apply_msg
-	// 更新了last_committed
-	rf.last_committed = lastincludeindex
-	DPrintf("Server %v sendSnapShotData KVServer complete, last_committed is update to %v", rf.me, lastincludeindex)
 }
 
 func (rf *Raft) PersistWithSnapShot(kvstate []byte, lastincludeindex int) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
+	if lastincludeindex <= rf.last_include_index {
+		DPrintf("Server %v PersistWithSnapShot becaues lastincludeindex: %v, but rf.last_include_index: %v", 
+			lastincludeindex, rf.last_include_index)
+		return 
+	}
 	// 坑点：由于PreLogIndex和PreLogTerm的原因，不能用lastincludeindex截断
 	DPrintf("Server %v start to truncatePrefix to %v, firstLogIndex: %v, lastLogIndex %v\n", rf.me, lastincludeindex, rf.log.firstLogIndex(), rf.log.lastLogIndex())
 	rf.log.truncatePrefix(lastincludeindex)
 	DPrintf("Server %v truncatePrefix complete to %v, firstLogIndex: %v, lastLogIndex %v\n", rf.me, lastincludeindex, rf.log.firstLogIndex(), rf.log.lastLogIndex())
 	raftstate := rf.encodestate()
 	rf.persister.SaveStateAndSnapshot(raftstate, kvstate)
+	rf.last_include_index = lastincludeindex
 	DPrintf("Server %v PersisWithSnapShot Complete", rf.me)
 }
 
@@ -457,9 +458,12 @@ func (rf *Raft) InstallSnapShot(args  *RequestInstallSnapShotArgs,
 	DPrintf("Server %v start to InstallSnapShot", rf.me)
 	reply.Sucess = true
 	reply.Term = rf.term
+	if rf.term > args.Term {
+		reply.Sucess = false
+		return 
+	}
 	if args.Term > rf.term {
 		rf.switchToFollower(args.Term)
-		return 
 	}
 	last_include_index := rf.readPersist(args.RaftState, args.SnapShot)
 	reply.LastIncludeIndex = last_include_index
@@ -585,8 +589,8 @@ func (rf *Raft) doInstallSnapShotRPC(server int) {
 			rf.switchToFollower(reply.Term)
 			return 
 		}
-		if request.Term != rf.term {
-			DPrintf("Server %v doInstallSnapShotRPC ERR, request.Term != rf.term", rf.me);
+		if request.Term != rf.term || reply.Sucess == false {
+			DPrintf("Server %v doInstallSnapShotRPC ERR, request.Term != rf.term or reply.Sucess is not true", rf.me);
 			return
 		}
 		cur_log_index := reply.LastIncludeIndex
@@ -804,22 +808,24 @@ func (rf *Raft) startSendApplyMsg() {
 		}
 		rf.applyCond.L.Unlock()	
 		rf.mu.Lock()
+		apply_msg := ApplyMsg{}
 		if rf.last_committed >= rf.committed_index {
 			rf.mu.Unlock()
 			continue;
+		} else if rf.last_committed < rf.last_include_index {
+			DPrintf("server %v try to send Snapdata by applyCh, rf.last_committed: %v, rf.last_include_index: %v", 
+				rf.me, rf.last_committed, rf.last_include_index)
+			apply_msg.CommandValid = false
+			apply_msg.SnapShot = rf.persister.ReadSnapshot()	
+		} else {
+			DPrintf("server %v try to getEntry %v, first_log_index: %v, last_log_index: %v, rf.committed_index: %v", 
+				rf.me, rf.last_committed + 1, rf.log.firstLogIndex(), rf.log.lastLogIndex(), rf.committed_index)
+			entry := rf.log.getEntry(rf.last_committed + 1, 1)
+			DPrintf("server %v try to apply logindex: %v", rf.me, rf.last_committed + 1)
+			apply_msg.CommandValid = true
+			apply_msg.Command = entry[0].Command 
+			apply_msg.CommandIndex = entry[0].LogIndex			
 		}
-		// 每次只对leader的committed_index加一
-		DPrintf("server %v try to getEntry %v, first_log_index: %v, last_log_index: %v, rf.committed_index: %v", 
-			rf.me, rf.last_committed + 1, rf.log.firstLogIndex(), rf.log.lastLogIndex(), rf.committed_index)
-		entry := rf.log.getEntry(rf.last_committed + 1, 1)
-		DPrintf("server %v try to apply logindex: %v", rf.me, rf.last_committed + 1)
-		apply_msg := ApplyMsg{}
-		apply_msg.CommandValid = true
-		apply_msg.Command = entry[0].Command 
-		apply_msg.CommandIndex = entry[0].LogIndex
-
-		// 为了保证日志有序，通过applyCh阻塞发送ApplyMsg
-		DPrintf("server %v start to send applymsg, logindex: %v", rf.me, entry[0].LogIndex)
 		rf.mu.Unlock()
 
 		rf.applyCh <- apply_msg
@@ -998,6 +1004,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.match_index = make([]int, len(rf.peers))
 	rf.committed_index = 0
 	rf.last_committed = 0
+	rf.last_include_index = 0
 	rf.applyCond = sync.NewCond(&sync.Mutex{})
 	go rf.leaderElectionClock()
 

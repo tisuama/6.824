@@ -80,6 +80,7 @@ func (kv *KVServer) updateDupTable(clientid, seq int64, value string) {
 }
 
 func (kv *KVServer) printvalue() {
+	DPrintf("kv store ptr: %p", &kv.store)
 	for k := range kv.store {
 		DPrintf("KVServer %v Store value, k: %v, value: %v", kv.me, k, kv.store[k])
 	}	
@@ -117,6 +118,7 @@ func (kv *KVServer) notifyRPCHandle(m raft.ApplyMsg) {
 func (kv *KVServer) HandleApplyMsg() {
 	for  m := range kv.applyCh {
 		DPrintf("KVServer %v new ApplyMsg, index: %v", kv.me, m.CommandIndex)
+		kv.printvalue()
 		if m.CommandValid == false {
 			DPrintf("KVserver %v start to restoreFromSnapShot", kv.me)
 			kv.restoreFromSnapShot(m.SnapShot)
@@ -298,31 +300,22 @@ func (kv *KVServer) makeSnapShot(lastincludeindex int) []byte {
 }
 
 func (kv *KVServer) restoreFromSnapShot(data []byte) {
-	if (len(data) < 1) {
+	kv.mu.Lock()
+	defer kv.mu.Unlock()
+	if (data == nil || len(data) < 1) {
 		DPrintf("KVServer %v restoreFromSnapShot failed becaues data is empty", kv.me)
 		return
 	}
-	var lastincludeindex int
-	var store map[string]string
-	var table map[int64]*TableEntry
 	r := bytes.NewBuffer(data)
 	d := labgob.NewDecoder(r)
-	if d.Decode(&lastincludeindex) != nil ||
-	   d.Decode(&store) != nil ||
-	   d.Decode(&table) != nil {
+	if d.Decode(&kv.lastincludeindex) != nil ||
+	   d.Decode(&kv.store) != nil ||
+	   d.Decode(&kv.table) != nil {
 		DPrintf("KVServer %v Decode error, return now", kv.me)
 		return 
 	}
-	kv.mu.Lock()
-	kv.lastincludeindex = lastincludeindex
-	kv.store = store
-	kv.printvalue()
-	kv.table = table
-	DPrintf("============")
-	kv.printvalue()
-	kv.mu.Unlock()
-	DPrintf("KVServer %v restoreFromSnapShot SUCESS, len(store): %v, len(kv.store): %v, len(table): %v, len(kv.table): %v", 
-		kv.me, len(store), len(kv.store), len(table), len(kv.table))
+	DPrintf("KVServer %v restoreFromSnapShot SUCESS, len(kv.store): %v, len(kv.table): %v", 
+		kv.me, len(kv.store), len(kv.table))
 }
 
 

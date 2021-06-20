@@ -1,4 +1,4 @@
-src/raft/log.go package raft
+package raft
 
 type LogStorage struct {
 	// first_log_index 1 last_log_index 0
