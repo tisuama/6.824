@@ -1,7 +1,7 @@
 #### MIT 6.824 LAB
 - [x] Lab 1: MapReduce
 - [x] Lab 2: Raft
-- [ ] Lab 3: KV Raft
+- [x] Lab 3: KV Raft
 - [ ] Lab 4: Sharded KV
 
 
